@@ -40,7 +40,8 @@ window.addEventListener("keydown", e => {
   if ((k === "p" || k === "escape") && (state === "play" || state === "pause")) state = state === "play" ? "pause" : "play";
   if (k === "m") sound.muted = !sound.muted;
   if (k === "t") autoAim = !autoAim;
-  if (k === "enter" && (state === "title" || state === "over")) startGame();
+  if (k === "d") debug = !debug;
+  if (k === "enter" && (state === "title" || state === "over" || state === "clear")) startGame();
 });
 
 // ---------------- サウンド(WebAudioで簡易生成) ----------------
@@ -67,16 +68,43 @@ const sfx = {
   bomb: () => sound.play(60, 0.6, "sawtooth", 0.12, -20),
 };
 
+// ---------------- 出現ペースの設定(ここの数値で難易度を調整) ----------------
+const SPAWN = {
+  startInterval: 2.5,   // 開始時の出現間隔(秒)。大きいほどゆっくり
+  minInterval: 0.5,     // 最短の出現間隔(秒)。これ以上は速くならない
+  rampPerSec: 0.004,    // 1秒ごとに間隔が縮む量。小さいほど激しくなるのが遅い
+  batchEvery: 120,      // この秒数ごとに、1回に出る敵の数が +1
+  bossEvery: 180,       // ボス(巨兵)が来る間隔(秒)
+};
+
+// ---------------- 敵の段階(時間で色違いの上位種が混ざる) ----------------
+// at: 出現し始める時間(秒) / hp: HP倍率 / xp: 経験値倍率 / dmg: 自機へのダメージ倍率 / tint: 色
+const TIERS = [
+  { name: "通常個体", at: 0,   hp: 1,  xp: 1, dmg: 1,   tint: "#ffffff" },
+  { name: "強化個体", at: 120, hp: 3,  xp: 2, dmg: 1.3, tint: "#ffd54f" },  // 金
+  { name: "精鋭個体", at: 240, hp: 8,  xp: 4, dmg: 1.6, tint: "#ff1744" },  // 赤
+  { name: "異形個体", at: 390, hp: 18, xp: 7, dmg: 2,   tint: "#d500f9" },  // 紫
+];
+const TIER_MIX = {
+  ramp: 90,         // 上位種が出始めてから、最大の割合になるまでの秒数
+  maxShare: 0.85,   // 上位種の割合の上限(0〜1)。残りは1つ下の段階の敵
+};
+const FINAL = {
+  bossAt: 540,      // 最終ボス(大巨兵)が来る時間(秒) 540 = 9:00
+  clearAt: 600,     // この時間まで生き残ればクリア(秒) 600 = 10:00
+};
+
 // ---------------- 敵の定義 ----------------
 // kind: ground=左右の地上 / air=空(上や斜め) / side=左右の空中
 const ENEMY = {
-  grunt:   { name: "歩兵",   hp: 3,   speed: 42,  r: 14, color: "#e05a5a", dmg: 8,  xp: 1, kind: "ground", from: 0 },
-  runner:  { name: "突撃兵", hp: 2,   speed: 115, r: 11, color: "#f2a33a", dmg: 6,  xp: 1, kind: "ground", from: 25 },
-  bat:     { name: "コウモリ", hp: 2, speed: 70,  r: 11, color: "#b86bff", dmg: 5,  xp: 1, kind: "side",   from: 15 },
-  diver:   { name: "降下兵", hp: 4,   speed: 55,  r: 13, color: "#4fc3f7", dmg: 8,  xp: 2, kind: "air",    from: 0 },
-  brute:   { name: "重装兵", hp: 16,  speed: 24,  r: 22, color: "#8d6e63", dmg: 20, xp: 5, kind: "ground", from: 60 },
-  spitter: { name: "砲撃手", hp: 7,   speed: 40,  r: 15, color: "#66bb6a", dmg: 0,  xp: 4, kind: "hover",  from: 90 },
-  boss:    { name: "巨兵",   hp: 160, speed: 16,  r: 40, color: "#d84315", dmg: 45, xp: 40, kind: "ground", from: 99999 },
+  grunt:   { name: "歩兵",     hp: 1,   speed: 42,  r: 14, color: "#e05a5a", dmg: 8,  xp: 1,   kind: "ground", from: 0 },
+  runner:  { name: "突撃兵",   hp: 1,   speed: 115, r: 11, color: "#f2a33a", dmg: 6,  xp: 1,   kind: "ground", from: 25 },
+  bat:     { name: "コウモリ", hp: 1,   speed: 70,  r: 11, color: "#b86bff", dmg: 5,  xp: 1,   kind: "side",   from: 15 },
+  diver:   { name: "降下兵",   hp: 2,   speed: 55,  r: 13, color: "#4fc3f7", dmg: 8,  xp: 2,   kind: "air",    from: 0 },
+  brute:   { name: "重装兵",   hp: 8,   speed: 24,  r: 22, color: "#8d6e63", dmg: 20, xp: 5,   kind: "ground", from: 60 },
+  spitter: { name: "砲撃手",   hp: 3,   speed: 40,  r: 15, color: "#66bb6a", dmg: 0,  xp: 4,   kind: "hover",  from: 90 },
+  boss:    { name: "巨兵",     hp: 40,  speed: 16,  r: 40, color: "#d84315", dmg: 30, xp: 30,  kind: "ground", from: 99999, boss: true },
+  titan:   { name: "大巨兵",   hp: 250, speed: 10,  r: 60, color: "#b71c1c", dmg: 25, xp: 100, kind: "ground", from: 99999, boss: true },
 };
 
 // ---------------- 強化の定義 ----------------
@@ -92,7 +120,10 @@ const UPGRADES = [
   { id: "tL",     name: "左タレット",     desc: "左側の敵を自動で撃つ砲台",   max: 5, apply: s => s.turrets.L += 1 },
   { id: "tR",     name: "右タレット",     desc: "右側の敵を自動で撃つ砲台",   max: 5, apply: s => s.turrets.R += 1 },
   { id: "tU",     name: "対空タレット",   desc: "上空の敵を自動で撃つ砲台",   max: 5, apply: s => s.turrets.U += 1 },
-  { id: "heal",   name: "緊急修理",       desc: "HPを50%回復",                max: 99, apply: s => s.hp = Math.min(s.maxHp, s.hp + s.maxHp * 0.5) },
+  // ↓ 補充カード(filler): 上限なし。通常の強化を取り切った後や、HPが減ったときに出る
+  { id: "heal",   name: "緊急修理",       desc: "HPを50%回復",                max: 9999, filler: true, apply: s => s.hp = Math.min(s.maxHp, s.hp + s.maxHp * 0.5) },
+  { id: "xdmg",   name: "火力微増",       desc: "弾のダメージ +8%",           max: 9999, filler: true, apply: s => s.dmg *= 1.08 },
+  { id: "xhp",    name: "装甲追加",       desc: "最大HP +10、10回復",         max: 9999, filler: true, apply: s => { s.maxHp += 10; s.hp = Math.min(s.maxHp, s.hp + 10); } },
 ];
 
 // ---------------- ドロップアイテム(撃って取る) ----------------
@@ -105,6 +136,7 @@ const ITEMS = {
 // ---------------- ゲーム状態 ----------------
 let state = "title";
 let autoAim = false;
+let debug = false;
 let S, enemies, bullets, ebullets, gems, items, particles, texts, choices;
 let spawnTimer, bossTimer, shake, lastTime = performance.now();
 
@@ -115,16 +147,16 @@ function startGame() {
     dmg: 1, fireInt: 0.22, multi: 1, pierce: 0, bulletSpeed: 520, boom: 0,
     turrets: { L: 0, R: 0, U: 0 }, tCool: { L: 0, R: 0, U: 0 },
     level: 1, xp: 0, xpNext: 6, time: 0, kills: 0,
-    fireCool: 0, frenzy: 0, levels: {}, hurtFlash: 0, aimAngle: -Math.PI / 2,
+    fireCool: 0, frenzy: 0, tierShown: 0, finalSpawned: false, finalKilled: false, banner: null, levels: {}, hurtFlash: 0, aimAngle: -Math.PI / 2,
   };
   enemies = []; bullets = []; ebullets = []; gems = []; items = []; particles = []; texts = [];
-  spawnTimer = 1; bossTimer = 120; shake = 0;
+  spawnTimer = 1; bossTimer = SPAWN.bossEvery; shake = 0;
   state = "play";
 }
 
 function onClick() {
   sound.init();
-  if (state === "title" || state === "over") { startGame(); return; }
+  if (state === "title" || state === "over" || state === "clear") { startGame(); return; }
   if (state === "levelup") {
     for (let i = 0; i < choices.length; i++) {
       const b = cardRect(i);
@@ -134,29 +166,41 @@ function onClick() {
 }
 
 // ---------------- 生成 ----------------
-function spawnEnemy(type, forceSide) {
+function spawnEnemy(type, forceSide, forceTier) {
   const d = ENEMY[type];
-  const scale = 1 + S.time / 100;                 // 時間で敵が硬くなる
-  const e = { type, d, hp: d.hp * scale, maxHp: d.hp * scale, r: d.r, speed: d.speed * (0.9 + Math.random() * 0.2),
+  const tier = forceTier != null ? forceTier : rollTier();
+  const T = TIERS[tier];
+  const hp = d.hp * T.hp;
+  const e = { type, d, tier, T, hp, maxHp: hp, r: d.r * (1 + tier * 0.1), speed: d.speed * (0.9 + Math.random() * 0.2),
+              color: tier ? mixColor(d.color, T.tint, 0.55) : d.color,
               flash: 0, t: Math.random() * 10, cool: 2 + Math.random() };
   const side = forceSide || (Math.random() < 0.5 ? "L" : "R");
   if (d.kind === "ground") {
-    e.x = side === "L" ? -d.r : W + d.r; e.y = GY - d.r;
+    e.x = side === "L" ? -e.r : W + e.r; e.y = GY - e.r;
   } else if (d.kind === "side") {
-    e.x = side === "L" ? -d.r : W + d.r; e.y = 140 + Math.random() * 200; e.baseY = e.y;
+    e.x = side === "L" ? -e.r : W + e.r; e.y = 140 + Math.random() * 200; e.baseY = e.y;
   } else if (d.kind === "air") {
-    e.x = 120 + Math.random() * (W - 240); e.y = -d.r;
+    e.x = 120 + Math.random() * (W - 240); e.y = -e.r;
   } else if (d.kind === "hover") {
-    e.x = 100 + Math.random() * (W - 200); e.y = -d.r; e.hoverY = 70 + Math.random() * 70;
+    e.x = 100 + Math.random() * (W - 200); e.y = -e.r; e.hoverY = 70 + Math.random() * 70;
   }
   enemies.push(e);
+  return e;
 }
+
+function tierShare(i) {     // 段階iの敵が混ざる割合(0〜maxShare)
+  if (i === 0) return 1;
+  return Math.max(0, Math.min(1, (S.time - TIERS[i].at) / TIER_MIX.ramp)) * TIER_MIX.maxShare;
+}
+function currentTier() { let c = 0; TIERS.forEach((T, i) => { if (S.time >= T.at) c = i; }); return c; }
+function rollTier() { let t = 0; for (let i = 1; i < TIERS.length; i++) if (Math.random() < tierShare(i)) t = i; return t; }
+function banner(text, color) { S.banner = { text, color, life: 3 }; }
 
 function pickEnemyType() {
   const pool = [];
   for (const [k, d] of Object.entries(ENEMY)) {
     if (S.time < d.from) continue;
-    const w = { grunt: 10, runner: 5, bat: 5, diver: 6, brute: 2, spitter: 1.5, boss: 0 }[k];
+    const w = { grunt: 10, runner: 5, bat: 5, diver: 6, brute: 2, spitter: 1.5, boss: 0, titan: 0 }[k];
     for (let i = 0; i < w * 2; i++) pool.push(k);
   }
   return pool[Math.floor(Math.random() * pool.length)];
@@ -186,14 +230,25 @@ function update(dt) {
 
   // --- 敵の出現 ---
   spawnTimer -= dt;
-  const interval = Math.max(0.28, 1.5 - S.time * 0.008);
+  const interval = Math.max(SPAWN.minInterval, SPAWN.startInterval - S.time * SPAWN.rampPerSec);
   if (spawnTimer <= 0) {
     spawnTimer = interval * (0.7 + Math.random() * 0.6);
-    const n = 1 + Math.floor(S.time / 75);
+    const n = 1 + Math.floor(S.time / SPAWN.batchEvery);
     for (let i = 0; i < n; i++) spawnEnemy(pickEnemyType());
   }
   bossTimer -= dt;
-  if (bossTimer <= 0) { bossTimer = 120; spawnEnemy("boss"); floatText(W / 2, 120, "巨兵 接近!", "#ff7043"); }
+  if (bossTimer <= 0 && S.time < FINAL.bossAt) {
+    bossTimer = SPAWN.bossEvery; spawnEnemy("boss", null, currentTier()); banner("巨兵 接近!", "#ff7043");
+  }
+  // 段階の切り替わりを告知
+  const ct = currentTier();
+  if (ct > S.tierShown) { S.tierShown = ct; banner(`第${ct + 1}段階 ― ${TIERS[ct].name}が出現し始めた`, TIERS[ct].tint); }
+  // 最終ボス
+  if (!S.finalSpawned && S.time >= FINAL.bossAt) {
+    S.finalSpawned = true; spawnEnemy("titan", null, TIERS.length - 1); banner("最終決戦 ― 大巨兵 襲来!", "#ff1744"); shake = 10;
+  }
+  // クリア判定
+  if (S.time >= FINAL.clearAt) { state = "clear"; sfx.lvl(); return; }
 
   // --- エイム ---
   let target = { x: mouse.x, y: mouse.y };
@@ -295,7 +350,7 @@ function update(dt) {
       if (e.cool <= 0 && e.y >= e.hoverY - 1) {
         e.cool = 3.2;
         const a = Math.atan2(P.y - e.y, P.x - e.x);
-        ebullets.push({ x: e.x, y: e.y, vx: Math.cos(a) * 130, vy: Math.sin(a) * 130, r: 7, life: 8, dmg: 10 });
+        ebullets.push({ x: e.x, y: e.y, vx: Math.cos(a) * 130, vy: Math.sin(a) * 130, r: 7, life: 8, dmg: Math.round(10 * e.T.dmg) });
       }
     }
   }
@@ -348,13 +403,14 @@ function damageEnemy(e, dmg) {
 
 function killEnemy(e) {
   S.kills++;
+  if (e.type === "titan") { S.finalKilled = true; banner("大巨兵 撃破!", "#ffd54f"); }
   sfx.kill();
-  burst(e.x, e.y, e.d.color, e.type === "boss" ? 40 : 12);
-  const n = e.type === "boss" ? 10 : 1;
+  burst(e.x, e.y, e.color, e.d.boss ? 40 : 12);
+  const n = e.d.boss ? 10 : 1;
   for (let i = 0; i < n; i++)
-    gems.push({ x: e.x, y: e.y, vx: (Math.random() - 0.5) * 160, vy: -120 - Math.random() * 120, t: 0, v: Math.ceil(e.d.xp / n) });
+    gems.push({ x: e.x, y: e.y, vx: (Math.random() - 0.5) * 160, vy: -120 - Math.random() * 120, t: 0, v: Math.ceil(e.d.xp * e.T.xp / n) });
   // アイテムドロップ
-  const chance = e.type === "boss" ? 1 : 0.05;
+  const chance = e.d.boss ? 1 : 0.05;
   if (Math.random() < chance) {
     const keys = Object.keys(ITEMS);
     let type = keys[Math.floor(Math.random() * keys.length)];
@@ -374,9 +430,11 @@ function explode(x, y, radius, dmg, except) {
 
 function hitPlayer(e) {
   if (e.hp <= 0) return;
-  S.hp -= e.d.dmg; S.hurtFlash = 0.3; shake = 8; sfx.hurt();
-  floatText(P.x, P.y - 40, "-" + e.d.dmg, "#ff8a80");
-  e.hp = 0; burst(e.x, e.y, e.d.color, 14);
+  const dmg = Math.round(e.d.dmg * e.T.dmg);
+  S.hp -= dmg; S.hurtFlash = 0.3; shake = 8; sfx.hurt();
+  floatText(P.x, P.y - 40, "-" + dmg, "#ff8a80");
+  if (e.d.boss) { e.x += (e.x < P.x ? -1 : 1) * 160; return; }   // ボスは消えずに押し戻される
+  e.hp = 0; burst(e.x, e.y, e.color, 14);
 }
 
 function collectItem(it) {
@@ -387,7 +445,7 @@ function collectItem(it) {
   if (it.type === "frenzy") S.frenzy = 8;
   if (it.type === "bomb") {
     sfx.bomb(); shake = 14;
-    for (const e of enemies) damageEnemy(e, 25 + S.time / 6);
+    for (const e of enemies) damageEnemy(e, 12 * TIERS[currentTier()].hp);
     ebullets = [];
   }
 }
@@ -402,11 +460,19 @@ function gainXp(v) {
 }
 
 function openLevelUp() {
-  const avail = UPGRADES.filter(u => (S.levels[u.id] || 0) < u.max && u.id !== "heal");
+  const rand = arr => arr.splice(Math.floor(Math.random() * arr.length), 1)[0];
+  const avail = UPGRADES.filter(u => (S.levels[u.id] || 0) < u.max && !u.filler);
   const pick = [];
-  while (pick.length < 3 && avail.length) pick.push(avail.splice(Math.floor(Math.random() * avail.length), 1)[0]);
+  while (pick.length < 3 && avail.length) pick.push(rand(avail));
+  // 通常の強化を取り切ったら、補充カードで3枚になるまで埋める
+  const fillers = UPGRADES.filter(u => u.filler && u.id !== "heal");
+  while (pick.length < 3 && fillers.length) pick.push(rand(fillers));
   // HPが減っていたら回復を候補に混ぜる
-  if (S.hp < S.maxHp * 0.5) pick[pick.length - 1] = UPGRADES.find(u => u.id === "heal");
+  const heal = UPGRADES.find(u => u.id === "heal");
+  if (S.hp < S.maxHp * 0.5 && !pick.includes(heal)) {
+    if (pick.length >= 3) pick[pick.length - 1] = heal; else pick.push(heal);
+  }
+  if (!pick.length) { state = "play"; return; }   // 念のため: 候補が無ければそのまま続行
   choices = pick;
   state = "levelup"; sfx.lvl();
 }
@@ -444,6 +510,7 @@ function draw() {
   if (state !== "title") drawHUD();
   if (state === "levelup") drawLevelUp();
   if (state === "pause") drawCenter("PAUSE", "P / Esc で再開");
+  if (state === "clear") drawCenter("CLEAR!", `10分間 生き残った! ・ Lv ${S.level} ・ 撃破 ${S.kills}\n大巨兵: ${S.finalKilled ? "撃破" : "撃破ならず"}\nクリック / Enter でもう一度`);
   if (state === "over") drawCenter("GAME OVER", `生存 ${fmtTime(S.time)} ・ Lv ${S.level} ・ 撃破 ${S.kills}\nクリック / Enter でリトライ`);
 
   drawCrosshair();
@@ -491,7 +558,7 @@ function drawWorld() {
 }
 
 function drawEnemy(e) {
-  const c = e.flash > 0 ? "#ffffff" : e.d.color;
+  const c = e.flash > 0 ? "#ffffff" : e.color;
   ctx.fillStyle = c;
   const k = e.d.kind;
   if (k === "ground") {
@@ -506,6 +573,10 @@ function drawEnemy(e) {
   } else {
     ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = "#1b5e20"; ctx.beginPath(); ctx.arc(e.x, e.y + 4, e.r * 0.45, 0, Math.PI * 2); ctx.fill();
+  }
+  if (e.tier > 0) {   // 上位種は色付きの輪で目立たせる
+    ctx.strokeStyle = e.T.tint; ctx.lineWidth = 2 + e.tier * 0.5;
+    ctx.beginPath(); ctx.arc(e.x, e.y, e.r + 5, 0, Math.PI * 2); ctx.stroke();
   }
   if (e.hp < e.maxHp) {
     const w = e.r * 2;
@@ -538,12 +609,15 @@ function drawHUD() {
   ctx.fillStyle = "#69f0ae"; ctx.fillRect(0, H - 8, W * S.xp / S.xpNext, 8);
   // 情報
   ctx.textAlign = "right"; ctx.font = "bold 16px sans-serif"; ctx.fillStyle = "#fff";
-  ctx.fillText(fmtTime(S.time), W - 16, 30);
+  ctx.fillText(`${fmtTime(S.time)} / ${fmtTime(FINAL.clearAt)}`, W - 16, 30);
   ctx.font = "13px sans-serif"; ctx.fillStyle = "#cfd8dc";
-  ctx.fillText(`Lv ${S.level}   撃破 ${S.kills}`, W - 16, 50);
+  ctx.fillStyle = TIERS[currentTier()].tint; ctx.fillText(`第${currentTier() + 1}段階`, W - 130, 50);
+  ctx.fillStyle = "#cfd8dc"; ctx.fillText(`Lv ${S.level}   撃破 ${S.kills}`, W - 16, 50);
   if (S.frenzy > 0) { ctx.fillStyle = "#4dd0e1"; ctx.fillText(`連射2倍 ${S.frenzy.toFixed(1)}s`, W - 16, 70); }
   ctx.textAlign = "left"; ctx.fillStyle = "#78909c"; ctx.font = "12px sans-serif";
-  ctx.fillText(`[T] エイム: ${autoAim ? "オート" : "マウス"}   [P] ポーズ   [M] 音 ${sound.muted ? "OFF" : "ON"}`, 16, H - 16);
+  ctx.fillText(`[T] エイム: ${autoAim ? "オート" : "マウス"}   [P] ポーズ   [M] 音 ${sound.muted ? "OFF" : "ON"}   [D] 数値表示`, 16, H - 16);
+  drawBanner();
+  if (debug) drawDebug();
   // 取得済み強化
   let y = 52;
   for (const u of UPGRADES) {
@@ -582,6 +656,7 @@ function drawTitle() {
     "マウスで狙う方向へ自動で連射 / 敵を倒すと経験値でレベルアップ",
     "浮かんでいるアイテム(♥ B F)は撃って取る",
     "緑の敵弾は撃ち落とせる",
+    "10分間生き残ればクリア。9分には最後の大ボスが来る",
   ];
   lines.forEach((l, i) => ctx.fillText(l, W / 2, 240 + i * 28));
   ctx.fillStyle = "#fff"; ctx.font = "bold 22px sans-serif";
@@ -603,6 +678,36 @@ function drawCrosshair() {
   ctx.moveTo(x - 16, y); ctx.lineTo(x - 5, y); ctx.moveTo(x + 5, y); ctx.lineTo(x + 16, y);
   ctx.moveTo(x, y - 16); ctx.lineTo(x, y - 5); ctx.moveTo(x, y + 5); ctx.lineTo(x, y + 16);
   ctx.stroke();
+}
+
+function drawBanner() {
+  const b = S.banner; if (!b) return;
+  b.life -= 1 / 60; if (b.life <= 0) { S.banner = null; return; }
+  ctx.globalAlpha = Math.min(1, b.life);
+  ctx.fillStyle = "rgba(0,0,0,0.55)"; ctx.fillRect(0, 96, W, 44);
+  ctx.fillStyle = b.color; ctx.font = "bold 22px sans-serif"; ctx.textAlign = "center";
+  ctx.fillText(b.text, W / 2, 126); ctx.globalAlpha = 1; ctx.textAlign = "left";
+}
+
+function drawDebug() {   // [D]キーで表示。数値調整の目安
+  const fi = S.fireInt * (S.frenzy > 0 ? 0.5 : 1);
+  const interval = Math.max(SPAWN.minInterval, SPAWN.startInterval - S.time * SPAWN.rampPerSec);
+  const shares = TIERS.map((T, i) => { let p = tierShare(i); for (let j = i + 1; j < TIERS.length; j++) p *= 1 - tierShare(j); return p; });
+  const lines = [
+    `自機の秒間ダメージ目安: ${(S.dmg * S.multi / fi).toFixed(1)}(全弾命中時)`,
+    `1発のダメージ: ${S.dmg.toFixed(2)} / 弾数: ${S.multi} / 貫通: ${S.pierce}`,
+    `出現間隔: ${interval.toFixed(2)}秒 × ${1 + Math.floor(S.time / SPAWN.batchEvery)}体`,
+    `画面上の敵: ${enemies.length}体`,
+    ...TIERS.map((T, i) => `${T.name}(HP×${T.hp}): ${Math.round(shares[i] * 100)}%`),
+  ];
+  ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(W - 300, 80, 290, 14 + lines.length * 17);
+  ctx.font = "12px sans-serif"; ctx.textAlign = "left"; ctx.fillStyle = "#e0e0e0";
+  lines.forEach((l, i) => ctx.fillText(l, W - 290, 98 + i * 17));
+}
+
+function mixColor(a, b, t) {
+  const pa = [1, 3, 5].map(i => parseInt(a.slice(i, i + 2), 16)), pb = [1, 3, 5].map(i => parseInt(b.slice(i, i + 2), 16));
+  return "#" + pa.map((v, i) => Math.round(v + (pb[i] - v) * t).toString(16).padStart(2, "0")).join("");
 }
 
 function diamond(x, y, r) { ctx.beginPath(); ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath(); ctx.fill(); }
