@@ -42,9 +42,9 @@ const SPAWN = {
 // at: 出現し始める時間(秒) / hp: HP倍率 / xp: 経験値倍率 / dmg: 自機へのダメージ倍率 / tint: 色
 const TIERS = [
   { name: "通常個体", at: 0,   hp: 1,  xp: 1,   dmg: 1,   tint: "#ffffff" },
-  { name: "強化個体", at: 120, hp: 3,  xp: 1.5, dmg: 1.3, tint: "#ffd54f" },  // 金
-  { name: "精鋭個体", at: 240, hp: 8,  xp: 2,   dmg: 1.6, tint: "#ff1744" },  // 赤
-  { name: "異形個体", at: 390, hp: 18, xp: 3,   dmg: 2,   tint: "#d500f9" },  // 紫
+  { name: "強化個体", at: 120, hp: 2,  xp: 1.5, dmg: 1.3, tint: "#ffd54f" },  // 金
+  { name: "精鋭個体", at: 240, hp: 4,  xp: 2,   dmg: 1.6, tint: "#ff1744" },  // 赤
+  { name: "異形個体", at: 390, hp: 7,  xp: 3,   dmg: 2,   tint: "#d500f9" },  // 紫
 ];
 const TIER_MIX = {
   ramp: 90,         // 上位種が出始めてから、最大の割合になるまでの秒数
@@ -98,6 +98,19 @@ const PASSIVE = {
   learn: 0.15,         // 学習回路: 経験値 +15%
 };
 
+// ---- 進化(武装Lv5 + 対応する強化Lv5 で、レベルアップ時に候補に出る) ----
+const EVOLVE = {
+  cluster:   { bomblets: 6, bombletDmg: 0.5, bombletRadius: 38 },   // クラスターミサイル: 子爆弾の数・威力(ミサイル比)・爆発範囲
+  aaBattery: { barrels: 3, pops: 3, radiusMul: 1.2 },               // 高射砲陣地: 砲身の数・1発が爆発する回数・炸裂範囲の倍率
+  heavy:     { dmgMul: 2.5, blastRadius: 55, knockMul: 1.5, intervalMul: 1.2 },  // 重砲台: 威力倍率・着弾爆発の範囲・押し戻し倍率・発射間隔倍率
+};
+const EVOLUTIONS = [
+  { id: "cluster",   from: "missile", with: "boom",    name: "クラスターミサイル", desc: "着弾すると子爆弾をばらまき、周りを巻き込む" },
+  { id: "aaBattery", from: "flak",    with: "pierce",  name: "高射砲陣地",         desc: "砲身が3本に。炸裂弾が敵を貫き、何度も爆発する" },
+  { id: "heavy",     from: "ground",  with: "caliber", name: "重砲台",             desc: "一撃が重くなり、着弾点が爆発する" },
+];
+const EVO_OF = Object.fromEntries(EVOLUTIONS.map(v => [v.from, v]));
+
 // ============================================================
 //  カード一覧
 // ============================================================
@@ -126,8 +139,8 @@ const CARDS = [
   { id: "bombup",  type: "filler", name: "ボム補充", desc: () => "ボムのストック +1" },
 ];
 const CARD = Object.fromEntries(CARDS.map(c => [c.id, c]));
-const TYPE_LABEL = { weapon: "武装", passive: "強化", filler: "補充" };
-const TYPE_COLOR = { weapon: "#ffb74d", passive: "#90caf9", filler: "#a5d6a7" };
+const TYPE_LABEL = { weapon: "武装", passive: "強化", filler: "補充", evolve: "★進化" };
+const TYPE_COLOR = { weapon: "#ffb74d", passive: "#90caf9", filler: "#a5d6a7", evolve: "#ffd740" };
 
 // ============================================================
 //  敵の定義
@@ -219,7 +232,7 @@ function startGame() {
   sound.init();
   S = {
     hp: 100, maxHp: 100, time: 0, kills: 0, level: 1, xp: 0, xpNext: LEVEL.base,
-    cards: {}, wcool: {}, bombs: BOMB.start,
+    cards: {}, wcool: {}, evolved: {}, bombs: BOMB.start,
     fireCool: 0, shield: 0, invuln: 0, hurtFlash: 0, aimAngle: -Math.PI / 2,
     tierShown: 0, bossDone: {}, finalSpawned: false, finalKilled: false, banner: null,
   };
@@ -455,11 +468,25 @@ function updateWeapons(dt) {
         const t = nearestEnemy(pos, e => Math.sign(e.x - P.x) === side && (e.d.kind === "ground" || e.y > GY - 140));
         if (!t) continue;
         fireBullet(pos.x, pos.y, Math.atan2(t.y - pos.y, t.x - pos.x),
-          { kind: "ground", speed: 520, dmg: Wp.dmg(L) * S.dmgMul, r: 5, color: "#ffcc80", extra: { knock: Wp.knock(L) } });
+          S.evolved.ground
+            ? { kind: "ground", speed: 520, dmg: Wp.dmg(L) * S.dmgMul * EVOLVE.heavy.dmgMul, r: 8, color: "#ff9100",
+                extra: { knock: Wp.knock(L) * EVOLVE.heavy.knockMul, blast: EVOLVE.heavy.blastRadius } }
+            : { kind: "ground", speed: 520, dmg: Wp.dmg(L) * S.dmgMul, r: 5, color: "#ffcc80", extra: { knock: Wp.knock(L) } });
         fired = true;
       }
     } else if (id === "flak") {
-      const t = nearestEnemy(FLAK_POS, e => e.y < GY - 150);
+      if (S.evolved.flak) {
+        // 高射砲陣地: 近い順に複数の敵へ、貫通して何度も爆発する炸裂弾を撃つ
+        const E = EVOLVE.aaBattery;
+        const ts = enemies.filter(e => e.hp > 0 && e.y < GY - 150).sort((a, b) => dist(a, FLAK_POS) - dist(b, FLAK_POS)).slice(0, E.barrels);
+        ts.forEach((t, i) => {
+          const o = flakBarrel(i);
+          fireBullet(o.x, o.y, Math.atan2(t.y - o.y, t.x - o.x),
+            { kind: "flak", speed: 480, dmg: Wp.dmg(L) * S.dmgMul, r: 6, color: "#18ffff", life: 1.6, extra: { radius: Wp.radius(L) * E.radiusMul, pops: E.pops } });
+        });
+        fired = ts.length > 0;
+      }
+      const t = !S.evolved.flak && nearestEnemy(FLAK_POS, e => e.y < GY - 150);
       if (t) {
         const d = dist(t, FLAK_POS);
         fireBullet(FLAK_POS.x, FLAK_POS.y, Math.atan2(t.y - FLAK_POS.y, t.x - FLAK_POS.x),
@@ -479,7 +506,7 @@ function updateWeapons(dt) {
         const n = Wp.count(L);
         for (let i = 0; i < n; i++) {
           const a = -Math.PI / 2 + (i - (n - 1) / 2) * 0.5 + (Math.random() - 0.5) * 0.2;
-          fireBullet(P.x, P.y - 10, a, { kind: "missile", speed: 300, dmg: Wp.dmg(L) * S.dmgMul, r: 5, color: "#ff8a65", life: 4, extra: { target: t } });
+          fireBullet(P.x, P.y - 10, a, { kind: "missile", speed: 300, dmg: Wp.dmg(L) * S.dmgMul, r: S.evolved.missile ? 7 : 5, color: S.evolved.missile ? "#ff3d00" : "#ff8a65", life: 4, extra: { target: t, cluster: !!S.evolved.missile } });
         }
         fired = true;
       }
@@ -505,9 +532,19 @@ function updateWeapons(dt) {
         sfx.nova(); shake = Math.max(shake, 3); fired = true;
       }
     }
-    S.wcool[id] = fired ? Wp.interval(L) : 0.15;
+    S.wcool[id] = fired ? Wp.interval(L) * (id === "ground" && S.evolved.ground ? EVOLVE.heavy.intervalMul : 1) : 0.15;
   }
 }
+
+function clusterBurst(b) {
+  const E = EVOLVE.cluster;
+  for (let i = 0; i < E.bomblets; i++) {
+    const a = -Math.PI / 2 + (Math.random() - 0.5) * 2.6;
+    fireBullet(b.x, b.y, a, { kind: "bomblet", speed: 120 + Math.random() * 140, dmg: b.dmg * E.bombletDmg, r: 3, color: "#ffab40",
+      life: 0.45 + Math.random() * 0.4, extra: { radius: E.bombletRadius } });
+  }
+}
+function flakBarrel(i) { return [FLAK_POS, { x: P.x - 46, y: GY - 60 }, { x: P.x + 46, y: GY - 60 }][i] || FLAK_POS; }
 
 function knockback(e, fx_, fy, amt) {
   if (e.d.boss) amt *= 0.15;
@@ -538,7 +575,11 @@ function updateBullets(dt) {
     b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
 
     // 対空炸裂弾: 目標地点で炸裂
-    if (b.kind === "flak" && b.life <= 0) { explode(b.x, b.y, b.radius, b.dmg, null, "#80deea"); continue; }
+    if (b.kind === "flak" && b.life <= 0) { explode(b.x, b.y, b.radius, b.dmg, null, b.color); continue; }
+    if (b.kind === "bomblet") {
+      b.vy += 300 * dt;
+      if (b.life <= 0 || b.y > GY) { explode(b.x, Math.min(b.y, GY - 4), b.radius, b.dmg, null, "#ffab40"); b.life = 0; continue; }
+    }
 
     // 画面端(跳弾があれば跳ね返る)
     if (b.x < 0 || b.x > W) { if (b.bounce > 0) { b.bounce--; b.vx *= -1; b.x = Math.max(0, Math.min(W, b.x)); b.hit.clear(); } else if (b.x < -30 || b.x > W + 30) b.life = 0; }
@@ -556,10 +597,11 @@ function updateBullets(dt) {
       if (e.hp <= 0 || b.hit.has(e)) continue;
       if (Math.hypot(e.x - b.x, e.y - b.y) >= e.r + b.r) continue;
       b.hit.add(e);
-      if (b.kind === "flak") { explode(b.x, b.y, b.radius, b.dmg, null, "#80deea"); b.life = 0; break; }
-      if (b.kind === "missile") { damageEnemy(e, b.dmg); explode(b.x, b.y, 28, b.dmg * 0.4, e, "#ff8a65"); b.life = 0; break; }
+      if (b.kind === "flak") { explode(b.x, b.y, b.radius, b.dmg, null, b.color); if (b.pops > 1) { b.pops--; continue; } b.life = 0; break; }
+      if (b.kind === "bomblet") { explode(b.x, b.y, b.radius, b.dmg, null, "#ffab40"); b.life = 0; break; }
+      if (b.kind === "missile") { damageEnemy(e, b.dmg); explode(b.x, b.y, 28, b.dmg * 0.4, e, "#ff8a65"); if (b.cluster) clusterBurst(b); b.life = 0; break; }
       damageEnemy(e, b.dmg);
-      if (b.kind === "ground") { knockback(e, P.x, P.y, b.knock); b.life = 0; break; }
+      if (b.kind === "ground") { if (b.blast) explode(b.x, b.y, b.blast, b.dmg * 0.6, e, "#ff9100"); knockback(e, P.x, P.y, b.knock); b.life = 0; break; }
       if (b.boom) explode(b.x, b.y, 30 + b.boom * 14, b.dmg * 0.6, e, "#ffb74d");
       if (b.pierce > 0) b.pierce--; else b.life = 0;
     }
@@ -714,7 +756,9 @@ function availableCards() {
 function openLevelUp() {
   const rand = arr => arr.splice(Math.floor(Math.random() * arr.length), 1)[0];
   const avail = availableCards();
-  const pick = [];
+  // 進化できる組み合わせがあれば、最優先で候補に出す
+  const pick = EVOLUTIONS.filter(v => !S.evolved[v.from] && lv(v.from) >= CARD_RULES.maxLevel && lv(v.with) >= CARD_RULES.maxLevel)
+    .slice(0, 3).map(v => ({ id: "evo_" + v.id, type: "evolve", name: v.name, evo: v, desc: () => v.desc }));
   while (pick.length < 3 && avail.length) pick.push(rand(avail));
   const fillers = [CARD.heal, CARD.bombup];
   while (pick.length < 3 && fillers.length) pick.push(rand(fillers));
@@ -731,6 +775,9 @@ function chooseUpgrade(i) {
   const c = choices[i]; if (!c) return;
   if (c.id === "heal") S.hp = Math.min(S.maxHp, S.hp + S.maxHp * 0.3);
   else if (c.id === "bombup") S.bombs = Math.min(BOMB.max, S.bombs + 1);
+  else if (c.type === "evolve") {
+    S.evolved[c.evo.from] = true; banner(`進化! ${CARD[c.evo.from].name} → ${c.name}`, "#ffd740"); sfx.lvl();
+  }
   else { S.cards[c.id] = lv(c.id) + 1; recalc(); }
   state = "play";
 }
@@ -763,7 +810,7 @@ function draw() {
 }
 
 function buildText() {
-  const list = CARDS.filter(c => lv(c.id) > 0).map(c => `${c.name}${lv(c.id)}`);
+  const list = CARDS.filter(c => lv(c.id) > 0).map(c => S.evolved[c.id] ? `★${EVO_OF[c.id].name}` : `${c.name}${lv(c.id)}`);
   return list.length ? "ビルド: " + list.join(" / ") : "ビルド: なし";
 }
 
@@ -799,13 +846,19 @@ function drawWorld() {
   // 砲台
   if (lv("ground")) for (const side of [-1, 1]) {
     const p = groundPos(side);
-    ctx.fillStyle = "#ffb74d"; ctx.fillRect(p.x - 10, p.y - 6, 20, 20);
+    if (S.evolved.ground) { ctx.fillStyle = "#ff9100"; ctx.fillRect(p.x - 14, p.y - 12, 28, 26); ctx.fillStyle = "#ffd740"; ctx.fillRect(p.x - 14, p.y - 12, 28, 3); }
+    else { ctx.fillStyle = "#ffb74d"; ctx.fillRect(p.x - 10, p.y - 6, 20, 20); }
     ctx.fillStyle = "#0b0d14"; ctx.font = "bold 10px sans-serif"; ctx.textAlign = "center"; ctx.fillText(lv("ground"), p.x, p.y + 8);
+  }
+  if (S.evolved.flak) for (let i = 1; i < 3; i++) {
+    const p = flakBarrel(i);
+    ctx.fillStyle = "#37474f"; ctx.fillRect(p.x - 3, p.y, 6, GY - p.y);
+    ctx.fillStyle = "#18ffff"; ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, Math.PI * 2); ctx.fill();
   }
   if (lv("flak")) {
     const p = FLAK_POS;
     ctx.fillStyle = "#37474f"; ctx.fillRect(p.x - 3, p.y, 6, GY - p.y);
-    ctx.fillStyle = "#4dd0e1"; ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = S.evolved.flak ? "#18ffff" : "#4dd0e1"; ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = "#0b0d14"; ctx.font = "bold 10px sans-serif"; ctx.textAlign = "center"; ctx.fillText(lv("flak"), p.x, p.y + 4);
   }
   // 弾
@@ -910,7 +963,11 @@ function drawHUD() {
     ctx.fillStyle = TYPE_COLOR[type]; ctx.font = "bold 12px sans-serif";
     ctx.fillText(`${TYPE_LABEL[type]} ${owned.length}/${slots}`, 18, y); y += 16;
     ctx.font = "12px sans-serif"; ctx.fillStyle = "#b0bec5";
-    for (const c of owned) { ctx.fillText(`${c.name} ${"■".repeat(lv(c.id))}${"□".repeat(CARD_RULES.maxLevel - lv(c.id))}`, 26, y); y += 15; }
+    for (const c of owned) {
+      if (S.evolved[c.id]) { ctx.fillStyle = "#ffd740"; ctx.fillText(`★${EVO_OF[c.id].name}`, 26, y); ctx.fillStyle = "#b0bec5"; }
+      else ctx.fillText(`${c.name} ${"■".repeat(lv(c.id))}${"□".repeat(CARD_RULES.maxLevel - lv(c.id))}`, 26, y);
+      y += 15;
+    }
     y += 6;
   }
   // XP
@@ -947,15 +1004,23 @@ function drawLevelUp() {
     ctx.textAlign = "left"; ctx.font = "bold 12px sans-serif"; ctx.fillText(`[${i + 1}] ${TYPE_LABEL[c.type]}`, b.x + 12, b.y + 24);
     const L = lv(c.id);
     ctx.textAlign = "right";
-    if (c.type !== "filler") {
+    if (c.type === "weapon" || c.type === "passive") {
       ctx.fillStyle = L === 0 ? "#ffeb3b" : "#b0bec5";
       ctx.fillText(L === 0 ? "NEW!" : `Lv ${L} → ${L + 1}`, b.x + b.w - 12, b.y + 24);
     }
     ctx.textAlign = "center"; ctx.fillStyle = "#fff"; ctx.font = "bold 21px sans-serif";
     ctx.fillText(c.name, b.x + b.w / 2, b.y + 60);
     ctx.fillStyle = "#cfd8dc"; ctx.font = "13px sans-serif";
+    if (c.type === "evolve") {
+      ctx.fillStyle = "#ffd740"; ctx.fillText(`${CARD[c.evo.from].name} + ${CARD[c.evo.with].name}`, b.x + b.w / 2, b.y + 86);
+      ctx.fillStyle = "#cfd8dc"; wrapText(c.desc(), b.x + b.w / 2, b.y + 112, b.w - 28, 18);
+      return;
+    }
     let y = wrapText(c.desc(), b.x + b.w / 2, b.y + 92, b.w - 28, 18);
-    if (c.type === "weapon" && L > 0) { ctx.fillStyle = col; wrapText("Lvアップ: " + c.up, b.x + b.w / 2, y + 8, b.w - 28, 18); }
+    if (c.type === "weapon" && L > 0) { ctx.fillStyle = col; y = wrapText("Lvアップ: " + c.up, b.x + b.w / 2, y + 8, b.w - 28, 18); }
+    // 進化の組み合わせのヒント
+    const hint = EVOLUTIONS.find(v => !S.evolved[v.from] && ((c.id === v.with && lv(v.from) > 0) || (c.id === v.from && lv(v.with) > 0)));
+    if (hint) { ctx.fillStyle = "#ffd740"; ctx.font = "12px sans-serif"; wrapText(`★両方Lv5で「${hint.name}」に進化`, b.x + b.w / 2, Math.max(y + 8, b.y + b.h - 22), b.w - 20, 16); }
   });
 }
 
@@ -1048,7 +1113,7 @@ function loop(now) {
 requestAnimationFrame(loop);
 
 // デバッグ用(ブラウザのコンソールから確認できる)
-window.__tw = { get S() { return S; }, get enemies() { return enemies; }, get state() { return state; }, startGame, CARDS, recalc };
+window.__tw = { EVOLUTIONS, get S() { return S; }, get enemies() { return enemies; }, get state() { return state; }, startGame, CARDS, recalc };
 </script>
 </body>
 </html>
