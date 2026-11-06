@@ -64,6 +64,9 @@ const CARD_RULES = { weaponSlots: 4, passiveSlots: 4, maxLevel: 5 };
 // ---- ボム ----
 const BOMB = { start: 1, max: 3, dmgPerTierHp: 12 };  // ダメージ = 12 × その時点の段階のHP倍率
 
+// ---- シールド(アイテム S) ----
+const SHIELD = { duration: 8 };   // ダメージを受けない時間(秒)
+
 // ---- 武装の性能(L = カードのレベル 1〜5)。ダメージには「火力強化」も掛かる ----
 const WEAPON = {
   ground:  { interval: L => 1.1 * Math.pow(0.85, L - 1), dmg: L => 1.5 + 0.5 * L, knock: L => 20 + 10 * L },
@@ -139,7 +142,7 @@ const SPAWN_WEIGHT = { grunt: 10, runner: 5, bat: 5, diver: 6, brute: 2, spitter
 const ITEMS = {
   heart:  { label: "♥", color: "#ff5c8a", desc: "HP+25" },
   bomb:   { label: "B", color: "#ffd54f", desc: "ボム +1" },
-  frenzy: { label: "F", color: "#4dd0e1", desc: "8秒間 連射2倍" },
+  shield: { label: "S", color: "#4dd0e1", desc: `${SHIELD.duration}秒間 シールド` },
 };
 
 // ============================================================
@@ -210,7 +213,7 @@ function startGame() {
   S = {
     hp: 100, maxHp: 100, time: 0, kills: 0, level: 1, xp: 0, xpNext: LEVEL.base,
     cards: {}, wcool: {}, bombs: BOMB.start,
-    fireCool: 0, frenzy: 0, hurtFlash: 0, aimAngle: -Math.PI / 2,
+    fireCool: 0, shield: 0, hurtFlash: 0, aimAngle: -Math.PI / 2,
     tierShown: 0, bossDone: {}, finalSpawned: false, finalKilled: false, banner: null,
   };
   recalc();
@@ -329,7 +332,7 @@ function update(dt) {
   S.time += dt;
   S.hp = Math.min(S.maxHp, S.hp + S.regen * dt);
   S.hurtFlash = Math.max(0, S.hurtFlash - dt);
-  S.frenzy = Math.max(0, S.frenzy - dt);
+  S.shield = Math.max(0, S.shield - dt);
   shake = Math.max(0, shake - dt * 30);
   if (S.banner) { S.banner.life -= dt; if (S.banner.life <= 0) S.banner = null; }
 
@@ -367,7 +370,7 @@ function update(dt) {
   // --- 主砲の自動連射 ---
   S.fireCool -= dt;
   if (S.fireCool <= 0) {
-    S.fireCool = S.fireInt * (S.frenzy > 0 ? 0.5 : 1);
+    S.fireCool = S.fireInt;
     for (let i = 0; i < S.multi; i++) {
       const a = ang + (i - (S.multi - 1) / 2) * 0.12;
       fireBullet(P.x + Math.cos(a) * 26, P.y + Math.sin(a) * 26, a,
@@ -627,6 +630,10 @@ function explode(x, y, radius, dmg, except, color = "#ffb74d") {
 }
 
 function hurtPlayer(raw) {
+  if (S.shield > 0) {   // シールド中はダメージを受けない
+    floatText(P.x, P.y - 40, "ガード", "#4dd0e1"); sound.play(1000, 0.08, "triangle", 0.04, 400);
+    return;
+  }
   const dmg = Math.max(1, Math.round(raw * S.dmgTaken));
   S.hp -= dmg; S.hurtFlash = 0.3; shake = 8; sfx.hurt();
   floatText(P.x, P.y - 40, "-" + dmg, "#ff8a80");
@@ -655,7 +662,7 @@ function collectItem(it) {
   burst(it.x, it.y, I.color, 16);
   floatText(it.x, it.y - 20, I.desc, I.color);
   if (it.type === "heart") S.hp = Math.min(S.maxHp, S.hp + 25);
-  if (it.type === "frenzy") S.frenzy = 8;
+  if (it.type === "shield") S.shield = SHIELD.duration;
   if (it.type === "bomb") {
     if (S.bombs < BOMB.max) S.bombs++;
     else { S.bombs++; useBomb(); }   // ストックが満タンならその場で発動
@@ -851,11 +858,17 @@ function drawEnemy(e) {
 function drawPlayer() {
   ctx.fillStyle = "#455a64"; ctx.fillRect(P.x - 28, GY - 12, 56, 12);
   ctx.save(); ctx.translate(P.x, P.y); ctx.rotate(S.aimAngle);
-  ctx.fillStyle = S.frenzy > 0 ? "#4dd0e1" : "#cfd8dc"; ctx.fillRect(0, -5 - lv("caliber") * 0.6, 30, 10 + lv("caliber") * 1.2);
+  ctx.fillStyle = "#cfd8dc"; ctx.fillRect(0, -5 - lv("caliber") * 0.6, 30, 10 + lv("caliber") * 1.2);
   ctx.restore();
   ctx.beginPath(); ctx.arc(P.x, P.y, 18, 0, Math.PI * 2);
   ctx.fillStyle = S.hurtFlash > 0 ? "#ff8a80" : "#90caf9"; ctx.fill();
   ctx.lineWidth = 3; ctx.strokeStyle = "#1e88e5"; ctx.stroke();
+  if (S.shield > 0 && !(S.shield < 2 && Math.floor(S.shield * 8) % 2)) {
+    const r = 32 + Math.sin(S.time * 6) * 2;
+    ctx.beginPath(); ctx.arc(P.x, P.y - 4, r, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(77,208,225,0.15)"; ctx.fill();
+    ctx.lineWidth = 3; ctx.strokeStyle = "rgba(77,208,225,0.85)"; ctx.stroke();
+  }
 }
 
 function drawHUD() {
@@ -891,7 +904,7 @@ function drawHUD() {
   ctx.font = "13px sans-serif";
   ctx.fillStyle = TIERS[currentTier()].tint; ctx.fillText(`第${currentTier() + 1}段階`, W - 130, 50);
   ctx.fillStyle = "#cfd8dc"; ctx.fillText(`Lv ${S.level}   撃破 ${S.kills}`, W - 16, 50);
-  if (S.frenzy > 0) { ctx.fillStyle = "#4dd0e1"; ctx.fillText(`連射2倍 ${S.frenzy.toFixed(1)}s`, W - 16, 70); }
+  if (S.shield > 0) { ctx.fillStyle = "#4dd0e1"; ctx.fillText(`シールド ${S.shield.toFixed(1)}s`, W - 16, 70); }
   ctx.textAlign = "left"; ctx.fillStyle = "#78909c"; ctx.font = "12px sans-serif";
   ctx.fillText(`[T] エイム: ${autoAim ? "オート" : "マウス"}   [P] ポーズ   [M] 音 ${sound.muted ? "OFF" : "ON"}   [D] 数値表示`, 16, H - 16);
   drawBanner();
@@ -973,7 +986,7 @@ function drawBanner() {
 }
 
 function drawDebug() {   // [D]キーで表示。数値調整の目安
-  const fi = S.fireInt * (S.frenzy > 0 ? 0.5 : 1);
+  const fi = S.fireInt;
   const interval = Math.max(SPAWN.minInterval, SPAWN.startInterval - S.time * SPAWN.rampPerSec);
   const shares = TIERS.map((T, i) => { let p = tierShare(i); for (let j = i + 1; j < TIERS.length; j++) p *= 1 - tierShare(j); return p; });
   const lines = [
