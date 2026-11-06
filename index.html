@@ -55,6 +55,21 @@ const FINAL = {
   clearAt: 600,     // この時間まで生き残ればクリア(秒) 600 = 10:00
 };
 
+// ---- ゲームの長さ ----
+// "normal" = 10分でクリア / "short" = 5分でクリア(イベント用の短縮版)
+// ファイル名の後ろに ?mode=short を付けて開いても切り替えられる(例: index.html?mode=short)
+// 上に書いた時間の値(段階・ボス・クリア・出現ペース)は「10分モードの値」。短縮版では自動で縮める
+const MODE_DEFAULT = "normal";
+const MODES = {
+  normal: { label: "10分モード", timeScale: 1,   xpMul: 1 },
+  short:  { label: "5分モード",  timeScale: 0.5, xpMul: 1.8 },  // 時間を半分に。成長が間に合うよう経験値を増やす
+};
+
+// ---- イベント向け ----
+const EVENT = {
+  idleToTitle: 30,  // ゲームオーバー/クリア画面で操作がないと、この秒数でタイトルへ戻る(次の人はチュートリアルから)
+};
+
 // ---- レベルアップに必要な経験値: base + Lv × perLevel + Lv ^ pow ----
 const LEVEL = { base: 6, perLevel: 4, pow: 1.4 };
 
@@ -154,9 +169,21 @@ const ENEMY = {
   brute:   { name: "重装兵",   hp: 8,   speed: 24,  r: 22, color: "#8d6e63", dmg: 20, xp: 5,   kind: "ground", from: 60 },
   spitter: { name: "砲撃手",   hp: 3,   speed: 40,  r: 15, color: "#66bb6a", dmg: 0,  xp: 4,   kind: "hover",  from: 90 },
   boss:    { name: "巨兵",     hp: 60,  speed: 16,  r: 40, color: "#d84315", dmg: 30, xp: 30,  kind: "ground", from: 99999, boss: true },
+  dummy:   { name: "的",       hp: 3,   speed: 0,   r: 18, color: "#90a4ae", dmg: 0,  xp: 1,   kind: "dummy",  from: 99999 },  // チュートリアル用
   titan:   { name: "大巨兵",   hp: 250, speed: 10,  r: 60, color: "#b71c1c", dmg: 25, xp: 100, kind: "ground", from: 99999, boss: true },
 };
 const SPAWN_WEIGHT = { grunt: 10, runner: 5, bat: 5, diver: 6, brute: 2, spitter: 1.5 };
+
+// ---- ゲームの長さ(MODE)を時間の設定に反映 ----
+const MODE = (() => { try { const m = new URLSearchParams(location.search).get("mode"); if (MODES[m]) return m; } catch (e) {} return MODE_DEFAULT; })();
+(function applyMode() {
+  const k = MODES[MODE].timeScale;
+  TIERS.forEach(t => t.at *= k);
+  TIER_MIX.ramp *= k; FINAL.bossAt *= k; FINAL.clearAt *= k;
+  SPAWN.rampPerSec /= k; SPAWN.batchEvery *= k;
+  for (const d of Object.values(ENEMY)) if (d.from < 99999) d.from *= k;
+})();
+function clearMinutes() { return Math.round(FINAL.clearAt / 60); }
 
 // ---- ドロップアイテム(撃って取る) ----
 const ITEMS = {
@@ -170,25 +197,30 @@ const ITEMS = {
 // ============================================================
 const mouse = { x: W / 2, y: 200 };
 cv.addEventListener("mousemove", e => {
+  lastInput = performance.now();
   const r = cv.getBoundingClientRect();
   mouse.x = (e.clientX - r.left) * (W / r.width);
   mouse.y = (e.clientY - r.top) * (H / r.height);
 });
 cv.addEventListener("contextmenu", e => e.preventDefault());
 cv.addEventListener("mousedown", e => {
+  lastInput = performance.now();
   sound.init();
   if (e.button === 2) { if (state === "play") useBomb(); return; }
   onClick();
 });
 window.addEventListener("keydown", e => {
   const k = e.key.toLowerCase();
+  lastInput = performance.now();
   if (state === "levelup" && ["1", "2", "3"].includes(k)) chooseUpgrade(+k - 1);
+  if (k === "escape" && state === "play" && tut) { finishTutorial(true); return; }        // チュートリアルをスキップ
+  if (k === "escape" && (state === "over" || state === "clear")) { state = "title"; return; }  // 次の人へ交代
   if ((k === "p" || k === "escape") && (state === "play" || state === "pause")) state = state === "play" ? "pause" : "play";
   if (k === "m") sound.muted = !sound.muted;
   if (k === "t") autoAim = !autoAim;
   if (k === "d") debug = !debug;
   if ((k === " " || k === "b") && state === "play") { e.preventDefault(); useBomb(); }
-  if (k === "enter" && (state === "title" || state === "over" || state === "clear")) startGame();
+  if (k === "enter") { if (state === "title") startGame(true); else if (state === "over" || state === "clear") startGame(false); }
 });
 
 // ============================================================
@@ -227,8 +259,9 @@ let state = "title";
 let autoAim = false, debug = false;
 let S, enemies, bullets, ebullets, gems, items, particles, texts, mines, fx, choices;
 let spawnTimer, shake, lastTime = performance.now();
+let lastInput = performance.now(), prevState = "title";
 
-function startGame() {
+function startGame(withTutorial) {
   sound.init();
   S = {
     hp: 100, maxHp: 100, time: 0, kills: 0, level: 1, xp: 0, xpNext: LEVEL.base,
@@ -241,10 +274,13 @@ function startGame() {
   enemies = []; bullets = []; ebullets = []; gems = []; items = []; particles = []; texts = []; mines = []; fx = [];
   spawnTimer = 1; shake = 0;
   state = "play";
+  tut = null;
+  if (withTutorial) { tut = { step: 0 }; tutGo(0); }
 }
 
 function onClick() {
-  if (state === "title" || state === "over" || state === "clear") { startGame(); return; }
+  if (state === "title") { startGame(true); return; }                            // タイトルから: チュートリアル付き
+  if (state === "over" || state === "clear") { startGame(false); return; }       // リトライ: チュートリアルなし
   if (state === "levelup") {
     for (let i = 0; i < choices.length; i++) {
       const b = cardRect(i);
@@ -349,7 +385,7 @@ function strongestEnemy() {
 //  更新
 // ============================================================
 function update(dt) {
-  S.time += dt;
+  if (!tut) S.time += dt;   // チュートリアル中は時間を進めない
   S.hp = Math.min(S.maxHp, S.hp + S.regen * dt);
   S.hurtFlash = Math.max(0, S.hurtFlash - dt);
   S.shield = Math.max(0, S.shield - dt);
@@ -359,6 +395,7 @@ function update(dt) {
 
   // --- クリア判定 ---
   if (S.time >= FINAL.clearAt) { state = "clear"; sfx.lvl(); return; }
+  if (tut) updateTutorial(dt);
 
   // --- 段階の切り替わり(告知 + 巨兵) ---
   const ct = currentTier();
@@ -373,7 +410,7 @@ function update(dt) {
   }
 
   // --- 敵の出現 ---
-  spawnTimer -= dt;
+  if (!tut) spawnTimer -= dt;
   if (spawnTimer <= 0) {
     const interval = Math.max(SPAWN.minInterval, SPAWN.startInterval - S.time * SPAWN.rampPerSec);
     spawnTimer = interval * (0.7 + Math.random() * 0.6);
@@ -436,7 +473,7 @@ function update(dt) {
   gems = gems.filter(g => !g.dead);
 
   // --- アイテム(ゆっくり漂って消える) ---
-  for (const it of items) { it.t += dt; it.y += Math.sin(it.t * 2) * 10 * dt; it.x += it.vx * dt; if (it.t > 7) it.dead = true; }
+  for (const it of items) { it.t += dt; it.y += Math.sin(it.t * 2) * 10 * dt; it.x += it.vx * dt; if (it.t > 7 && !it.tut) it.dead = true; }   // チュートリアルのアイテムは消えない
   items = items.filter(i => !i.dead);
 
   // --- 演出 ---
@@ -688,6 +725,7 @@ function hurtPlayer(raw) {
   if (S.invuln > 0) return "invuln";
   const dmg = Math.max(1, Math.round(raw * S.dmgTaken));
   S.hp -= dmg; S.hurtFlash = 0.3; shake = 8; sfx.hurt();
+  if (tut) S.hp = Math.max(1, S.hp);   // チュートリアルでは倒れない
   floatText(P.x, P.y - 40, "-" + dmg, "#ff8a80");
   // 無敵時間を付け、周りの敵を押し返す(ダメージなし)
   S.invuln = HURT.invuln;
@@ -707,6 +745,7 @@ function hitPlayer(e) {
 function useBomb() {
   if (S.bombs <= 0) return;
   S.bombs--;
+  if (tut) tut.bombUsed = true;
   sfx.bomb(); shake = 14;
   fx.push({ type: "flash", life: 0.25, max: 0.25 });
   const dmg = BOMB.dmgPerTierHp * TIERS[currentTier()].hp;
@@ -728,7 +767,8 @@ function collectItem(it) {
 }
 
 function gainXp(v) {
-  S.xp += v * S.xpMul; sfx.gem();
+  S.xp += v * S.xpMul * MODES[MODE].xpMul; sfx.gem();
+  if (tut && tut.step < 2) { S.xp = Math.min(S.xp, S.xpNext - 0.01); return; }   // チュートリアル前半はレベルアップさせない
   if (S.xp >= S.xpNext) {
     S.xp -= S.xpNext; S.level++;
     S.xpNext = Math.floor(LEVEL.base + S.level * LEVEL.perLevel + Math.pow(S.level, LEVEL.pow));
@@ -780,6 +820,83 @@ function chooseUpgrade(i) {
   }
   else { S.cards[c.id] = lv(c.id) + 1; recalc(); }
   state = "play";
+  if (tut) tut.chosen = true;
+}
+
+// ============================================================
+//  チュートリアル(タイトルから始めたときだけ。終わるとそのまま本編へ)
+// ============================================================
+const TUTORIAL = [
+  { title: "狙って撃つ",
+    text: "マウスを向けた方向へ自動で撃ちます。左・右・上の的を壊そう",
+    start() { for (const [x, y] of [[P.x - 300, GY - 70], [P.x + 300, GY - 70], [P.x, 130]]) { const e = spawnEnemy("dummy", null, 0); e.x = x; e.y = y; } },
+    done: () => enemies.length === 0 },
+  { title: "3方向から来る敵",
+    text: "敵は左・右・上から迫ってきます。近づかれる前に倒そう",
+    start() { tut.queue = [["grunt", "L", 0.3], ["grunt", "R", 1.5], ["diver", null, 2.7], ["runner", "L", 4], ["grunt", "R", 4.8], ["diver", null, 5.6]]; },
+    done: () => tut.queue.length === 0 && enemies.length === 0 },
+  { title: "カードで強くなる",
+    text: "倒した敵の経験値(緑の粒)が集まると、レベルアップしてカードを1枚選べます",
+    start() { tut.wait = 1.5; tut.lv0 = S.level; },
+    update(dt) { if (tut.wait > 0 && (tut.wait -= dt) <= 0 && S.level === tut.lv0) { S.xp = Math.max(S.xp, S.xpNext); gainXp(0); } },
+    done: () => tut.chosen },
+  { title: "アイテムは撃って取る",
+    text: "浮かんでいるアイテムは、撃つと手に入ります。3つとも取ってみよう",
+    start() {
+      S.hp = Math.min(S.hp, Math.round(S.maxHp * 0.6));   // ♥の効果が分かるようにHPを減らしておく
+      S.bombs = Math.min(S.bombs, BOMB.max - 1);           // Bを取ったときにストックが増えるのが見えるように
+      for (const [type, x, y, caption] of [["heart", P.x - 270, 290, "HPを回復"], ["shield", P.x + 130, 320, ""], ["bomb", P.x + 300, 235, "ボムのストック+1"]])
+        items.push({ type, x, y, vx: 0, t: 0, tut: true, caption: type === "shield" ? `${SHIELD.duration}秒間 無敵のシールド` : caption });
+    },
+    done: () => !items.some(i => i.tut) },
+  { title: "ボムで切り抜ける",
+    text: "囲まれたら 右クリック(または Space)でボム! 画面中の敵に大ダメージ",
+    start() { S.bombs = Math.max(S.bombs, 1); tutCrowd(); },
+    update() { if (!tut.bombUsed && enemies.length === 0) { S.bombs = Math.max(S.bombs, 1); tutCrowd(); } },
+    done: () => tut.bombUsed },
+];
+let tut = null;   // チュートリアルの進行状況(本編中は null)
+
+function tutCrowd() {
+  for (let i = 0; i < 5; i++) for (const side of [-1, 1]) { const e = spawnEnemy("grunt", side < 0 ? "L" : "R", 0); e.x = P.x + side * (230 + i * 40); }
+}
+
+function tutGo(step) {
+  if (step >= TUTORIAL.length) return finishTutorial(false);
+  Object.assign(tut, { step, wait: 0, chosen: false, bombUsed: false, queue: [], qt: 0, doneTimer: 0 });
+  TUTORIAL[step].start();
+  sound.play(700, 0.1, "sine", 0.04, 200);
+}
+
+function updateTutorial(dt) {
+  const st = TUTORIAL[tut.step];
+  tut.qt += dt;
+  while (tut.queue.length && tut.queue[0][2] <= tut.qt) { const [type, side] = tut.queue.shift(); spawnEnemy(type, side, 0); }
+  if (st.update) st.update(dt);
+  if (st.done()) { tut.doneTimer += dt; if (tut.doneTimer > 0.8) tutGo(tut.step + 1); }   // 少し間を置いて次へ
+}
+
+// チュートリアル終了 → 本編を最初から開始。最後まで進めた場合は選んだカードを持ち越す
+function finishTutorial(skipped) {
+  const keep = skipped ? null : { cards: S.cards, evolved: S.evolved, level: S.level, xp: S.xp, xpNext: S.xpNext };
+  startGame(false);
+  if (keep) { Object.assign(S, keep); recalc(); S.hp = S.maxHp; }
+  banner(`本番スタート! ${clearMinutes()}分間 生き残れ`, "#90caf9");
+}
+
+function drawTutorial() {
+  const st = TUTORIAL[tut.step]; if (!st) return;
+  const w = 620, x = W / 2 - w / 2, y = 120, h = 74;
+  ctx.fillStyle = "rgba(10,16,36,0.88)"; ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = st.done() ? "#69f0ae" : "#90caf9"; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h);
+  ctx.textAlign = "left"; ctx.fillStyle = "#90caf9"; ctx.font = "bold 13px sans-serif";
+  ctx.fillText(`チュートリアル ${tut.step + 1}/${TUTORIAL.length} ― ${st.title}`, x + 14, y + 22);
+  ctx.textAlign = "right"; ctx.fillStyle = "#90a4ae"; ctx.font = "12px sans-serif";
+  ctx.fillText("Esc: スキップして本番へ", x + w - 14, y + 22);
+  ctx.textAlign = "center"; ctx.font = "bold 16px sans-serif";
+  ctx.fillStyle = st.done() ? "#69f0ae" : "#fff";
+  wrapText(st.done() ? "OK!" : st.text, W / 2, y + 52, w - 30, 20);
+  ctx.textAlign = "left";
 }
 
 // ============================================================
@@ -804,9 +921,14 @@ function draw() {
   if (state !== "title") drawHUD();
   if (state === "levelup") drawLevelUp();
   if (state === "pause") drawCenter("PAUSE", "P / Esc で再開");
-  if (state === "over") drawCenter("GAME OVER", `生存 ${fmtTime(S.time)} ・ Lv ${S.level} ・ 撃破 ${S.kills}\n${buildText()}\nクリック / Enter でリトライ`);
-  if (state === "clear") drawCenter("CLEAR!", `10分間 生き残った! ・ Lv ${S.level} ・ 撃破 ${S.kills}\n大巨兵: ${S.finalKilled ? "撃破" : "撃破ならず"}\n${buildText()}\nクリック / Enter でもう一度`);
+  if (state === "over") drawCenter("GAME OVER", `生存 ${fmtTime(S.time)} ・ Lv ${S.level} ・ 撃破 ${S.kills}\n${buildText()}\nクリック / Enter: リトライ    Esc: タイトルへ(次の人へ交代)${idleNote()}`);
+  if (state === "clear") drawCenter("CLEAR!", `${clearMinutes()}分間 生き残った! ・ Lv ${S.level} ・ 撃破 ${S.kills}\n大巨兵: ${S.finalKilled ? "撃破" : "撃破ならず"}\n${buildText()}\nクリック / Enter: もう一度    Esc: タイトルへ(次の人へ交代)${idleNote()}`);
   drawCrosshair();
+}
+
+function idleNote() {   // 放置されているとき、タイトルへ戻るまでの残り秒数
+  const left = EVENT.idleToTitle - (performance.now() - lastInput) / 1000;
+  return left < 10 ? `\n${Math.ceil(Math.max(0, left))}秒後にタイトルへ戻ります` : "";
 }
 
 function buildText() {
@@ -831,12 +953,13 @@ function drawWorld() {
   for (const g of gems) { ctx.fillStyle = "#69f0ae"; diamond(g.x, g.y, 5); }
   for (const it of items) {
     const I = ITEMS[it.type];
-    if (it.t > 5 && Math.floor(it.t * 8) % 2) continue;
+    if (!it.tut && it.t > 5 && Math.floor(it.t * 8) % 2) continue;
     ctx.beginPath(); ctx.arc(it.x, it.y, 15, 0, Math.PI * 2);
     ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fill();
     ctx.lineWidth = 3; ctx.strokeStyle = I.color; ctx.stroke();
     ctx.fillStyle = I.color; ctx.font = "bold 16px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText(I.label, it.x, it.y + 1); ctx.textBaseline = "alphabetic";
+    if (it.caption) { ctx.font = "bold 13px sans-serif"; ctx.fillText(it.caption, it.x, it.y + 34); }   // チュートリアル用の説明
   }
   for (const e of enemies) drawEnemy(e);
   for (const eb of ebullets) {
@@ -908,6 +1031,10 @@ function drawEnemy(e) {
     ctx.beginPath(); ctx.moveTo(e.x - e.r * 1.8, e.y + wing); ctx.lineTo(e.x, e.y - 4); ctx.lineTo(e.x + e.r * 1.8, e.y + wing); ctx.lineTo(e.x, e.y + e.r); ctx.closePath(); ctx.fill();
   } else if (k === "air") {
     ctx.beginPath(); ctx.moveTo(e.x, e.y + e.r * 1.3); ctx.lineTo(e.x - e.r, e.y - e.r); ctx.lineTo(e.x + e.r, e.y - e.r); ctx.closePath(); ctx.fill();
+  } else if (k === "dummy") {
+    ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = e.flash > 0 ? "#fff" : "#e53935"; ctx.beginPath(); ctx.arc(e.x, e.y, e.r * 0.62, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#eceff1"; ctx.beginPath(); ctx.arc(e.x, e.y, e.r * 0.28, 0, Math.PI * 2); ctx.fill();
   } else {
     ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = "#1b5e20"; ctx.beginPath(); ctx.arc(e.x, e.y + 4, e.r * 0.45, 0, Math.PI * 2); ctx.fill();
@@ -975,13 +1102,14 @@ function drawHUD() {
   ctx.fillStyle = "#69f0ae"; ctx.fillRect(0, H - 8, W * Math.min(1, S.xp / S.xpNext), 8);
   // 右上の情報
   ctx.textAlign = "right"; ctx.font = "bold 16px sans-serif"; ctx.fillStyle = "#fff";
-  ctx.fillText(`${fmtTime(S.time)} / ${fmtTime(FINAL.clearAt)}`, W - 16, 30);
+  ctx.fillText(tut ? "チュートリアル" : `${fmtTime(S.time)} / ${fmtTime(FINAL.clearAt)}`, W - 16, 30);
   ctx.font = "13px sans-serif";
   ctx.fillStyle = TIERS[currentTier()].tint; ctx.fillText(`第${currentTier() + 1}段階`, W - 130, 50);
   ctx.fillStyle = "#cfd8dc"; ctx.fillText(`Lv ${S.level}   撃破 ${S.kills}`, W - 16, 50);
   if (S.shield > 0) { ctx.fillStyle = "#4dd0e1"; ctx.fillText(`シールド ${S.shield.toFixed(1)}s`, W - 16, 70); }
   ctx.textAlign = "left"; ctx.fillStyle = "#78909c"; ctx.font = "12px sans-serif";
   ctx.fillText(`[T] エイム: ${autoAim ? "オート" : "マウス"}   [P] ポーズ   [M] 音 ${sound.muted ? "OFF" : "ON"}   [D] 数値表示`, 16, H - 16);
+  if (tut) drawTutorial();
   drawBanner();
   if (debug) drawDebug();
 }
@@ -1022,6 +1150,10 @@ function drawLevelUp() {
     const hint = EVOLUTIONS.find(v => !S.evolved[v.from] && ((c.id === v.with && lv(v.from) > 0) || (c.id === v.from && lv(v.with) > 0)));
     if (hint) { ctx.fillStyle = "#ffd740"; ctx.font = "12px sans-serif"; wrapText(`★両方Lv5で「${hint.name}」に進化`, b.x + b.w / 2, Math.max(y + 8, b.y + b.h - 22), b.w - 20, 16); }
   });
+  if (tut) {
+    ctx.textAlign = "center"; ctx.fillStyle = "#ffd740"; ctx.font = "bold 15px sans-serif";
+    ctx.fillText("カードは 武装4種類・強化4種類 まで持てます。何を選ぶかで戦い方が変わる!", W / 2, 400);
+  }
 }
 
 function wrapText(text, cx, y, maxW, lh) {
@@ -1044,11 +1176,12 @@ function drawTitle() {
     "マウスで狙う方向へ自動で連射 / レベルアップでカードを選んで強化",
     "カードは 武装4種類・強化4種類 まで。何に絞るかで戦い方が変わる",
     "右クリック(Space)でボム / 浮かんでいるアイテムは撃って取る",
-    "10分間生き残ればクリア。9分には最後の大ボスが来る",
+    `${clearMinutes()}分間生き残ればクリア。${fmtTime(FINAL.bossAt)}には最後の大ボスが来る`,
   ];
   lines.forEach((l, i) => ctx.fillText(l, W / 2, 215 + i * 28));
   ctx.fillStyle = "#fff"; ctx.font = "bold 22px sans-serif";
-  if (Math.floor(performance.now() / 500) % 2) ctx.fillText("クリックでスタート", W / 2, 400);
+  if (Math.floor(performance.now() / 500) % 2) ctx.fillText("クリックでスタート(チュートリアルから始まります)", W / 2, 400);
+  if (MODE !== "normal") { ctx.fillStyle = "#ffd740"; ctx.font = "bold 16px sans-serif"; ctx.fillText(`― ${MODES[MODE].label} ―`, W / 2, 186); }
 }
 
 function drawCenter(title, sub) {
@@ -1107,13 +1240,16 @@ function loop(now) {
   const dt = Math.min(0.05, (now - lastTime) / 1000);
   lastTime = now;
   if (state === "play") update(dt);
+  if ((state === "over" || state === "clear") && prevState !== state) lastInput = now;   // 終了画面に入った時点から数える
+  if ((state === "over" || state === "clear") && now - lastInput > EVENT.idleToTitle * 1000) state = "title";
+  prevState = state;
   draw();
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
 
 // デバッグ用(ブラウザのコンソールから確認できる)
-window.__tw = { EVOLUTIONS, get S() { return S; }, get enemies() { return enemies; }, get state() { return state; }, startGame, CARDS, recalc };
+window.__tw = { EVOLUTIONS, get tut() { return tut; }, MODE, FINAL, get S() { return S; }, get enemies() { return enemies; }, get state() { return state; }, startGame, CARDS, recalc };
 </script>
 </body>
 </html>
