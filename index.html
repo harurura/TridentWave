@@ -67,6 +67,13 @@ const BOMB = { start: 1, max: 3, dmgPerTierHp: 12 };  // ダメージ = 12 × �
 // ---- シールド(アイテム S) ----
 const SHIELD = { duration: 8 };   // ダメージを受けない時間(秒)
 
+// ---- 被弾時の無敵と押し返し ----
+const HURT = {
+  invuln: 0.8,       // 被弾後の無敵時間(秒)。この間は点滅し、ダメージを受けない
+  pushRadius: 100,   // 被弾した瞬間に押し返す範囲(自機からの距離)
+  push: 70,          // 押し返す距離。ダメージは与えない(ボスは15%だけ)
+};
+
 // ---- 武装の性能(L = カードのレベル 1〜5)。ダメージには「火力強化」も掛かる ----
 const WEAPON = {
   ground:  { interval: L => 1.1 * Math.pow(0.85, L - 1), dmg: L => 1.5 + 0.5 * L, knock: L => 20 + 10 * L },
@@ -213,7 +220,7 @@ function startGame() {
   S = {
     hp: 100, maxHp: 100, time: 0, kills: 0, level: 1, xp: 0, xpNext: LEVEL.base,
     cards: {}, wcool: {}, bombs: BOMB.start,
-    fireCool: 0, shield: 0, hurtFlash: 0, aimAngle: -Math.PI / 2,
+    fireCool: 0, shield: 0, invuln: 0, hurtFlash: 0, aimAngle: -Math.PI / 2,
     tierShown: 0, bossDone: {}, finalSpawned: false, finalKilled: false, banner: null,
   };
   recalc();
@@ -333,6 +340,7 @@ function update(dt) {
   S.hp = Math.min(S.maxHp, S.hp + S.regen * dt);
   S.hurtFlash = Math.max(0, S.hurtFlash - dt);
   S.shield = Math.max(0, S.shield - dt);
+  S.invuln = Math.max(0, S.invuln - dt);
   shake = Math.max(0, shake - dt * 30);
   if (S.banner) { S.banner.life -= dt; if (S.banner.life <= 0) S.banner = null; }
 
@@ -629,20 +637,28 @@ function explode(x, y, radius, dmg, except, color = "#ffb74d") {
   }
 }
 
+// 戻り値: "shield"=シールドで防いだ / "invuln"=無敵時間中 / "hit"=ダメージを受けた
 function hurtPlayer(raw) {
   if (S.shield > 0) {   // シールド中はダメージを受けない
     floatText(P.x, P.y - 40, "ガード", "#4dd0e1"); sound.play(1000, 0.08, "triangle", 0.04, 400);
-    return;
+    return "shield";
   }
+  if (S.invuln > 0) return "invuln";
   const dmg = Math.max(1, Math.round(raw * S.dmgTaken));
   S.hp -= dmg; S.hurtFlash = 0.3; shake = 8; sfx.hurt();
   floatText(P.x, P.y - 40, "-" + dmg, "#ff8a80");
+  // 無敵時間を付け、周りの敵を押し返す(ダメージなし)
+  S.invuln = HURT.invuln;
+  for (const e of enemies) if (e.hp > 0 && dist(e, P) < HURT.pushRadius + e.r) knockback(e, P.x, P.y, HURT.push);
+  fx.push({ type: "ring", r: HURT.pushRadius, life: 0.3, max: 0.3, color: "255,138,128" });
+  return "hit";
 }
 
 function hitPlayer(e) {
   if (e.hp <= 0) return;
-  hurtPlayer(e.d.dmg * e.T.dmg);
+  const res = hurtPlayer(e.d.dmg * e.T.dmg);
   if (e.d.boss) { e.x += (e.x < P.x ? -1 : 1) * 160; return; }   // ボスは消えずに押し戻される
+  if (res === "invuln") { knockback(e, P.x, P.y, HURT.push); return; }   // 無敵中に触れた敵は消さずに押し戻す
   e.hp = 0; burst(e.x, e.y, e.color, 14);
 }
 
@@ -811,7 +827,7 @@ function drawWorld() {
       ctx.stroke(); ctx.globalAlpha = 1;
     } else if (f.type === "ring") {
       const k = 1 - f.life / f.max;
-      ctx.strokeStyle = `rgba(144,202,249,${f.life / f.max})`; ctx.lineWidth = 6;
+      ctx.strokeStyle = `rgba(${f.color || "144,202,249"},${f.life / f.max})`; ctx.lineWidth = 6;
       ctx.beginPath(); ctx.arc(P.x, P.y, 20 + (f.r - 20) * k, 0, Math.PI * 2); ctx.stroke();
     } else if (f.type === "blast") {
       ctx.globalAlpha = (f.life / f.max) * 0.35; ctx.fillStyle = f.color;
@@ -856,6 +872,7 @@ function drawEnemy(e) {
 }
 
 function drawPlayer() {
+  if (S.invuln > 0 && Math.floor(S.invuln * 15) % 2) ctx.globalAlpha = 0.35;   // 無敵中は点滅
   ctx.fillStyle = "#455a64"; ctx.fillRect(P.x - 28, GY - 12, 56, 12);
   ctx.save(); ctx.translate(P.x, P.y); ctx.rotate(S.aimAngle);
   ctx.fillStyle = "#cfd8dc"; ctx.fillRect(0, -5 - lv("caliber") * 0.6, 30, 10 + lv("caliber") * 1.2);
@@ -863,6 +880,7 @@ function drawPlayer() {
   ctx.beginPath(); ctx.arc(P.x, P.y, 18, 0, Math.PI * 2);
   ctx.fillStyle = S.hurtFlash > 0 ? "#ff8a80" : "#90caf9"; ctx.fill();
   ctx.lineWidth = 3; ctx.strokeStyle = "#1e88e5"; ctx.stroke();
+  ctx.globalAlpha = 1;
   if (S.shield > 0 && !(S.shield < 2 && Math.floor(S.shield * 8) % 2)) {
     const r = 32 + Math.sin(S.time * 6) * 2;
     ctx.beginPath(); ctx.arc(P.x, P.y - 4, r, 0, Math.PI * 2);
