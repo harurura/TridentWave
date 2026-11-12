@@ -9,7 +9,28 @@ const cv = document.getElementById("game");
 const ctx = cv.getContext("2d");
 const W = cv.width, H = cv.height;
 const GY = 470;                     // 地面の高さ
-const P = { x: W / 2, y: GY - 22 }; // 自機の位置(固定)
+const P = { x: W / 2, y: GY - PLAYER_ART.body.height / 2 };   // 自機の中心(当たり判定の中心)
+// 砲身の回転軸(弾はここから出る)。本体画像の中の位置から計算する
+const AIM = { x: P.x - PLAYER_ART.body.width / 2 + PLAYER_ART.body.width * PLAYER_ART.pivot.x,
+              y: GY - PLAYER_ART.body.height + PLAYER_ART.body.height * PLAYER_ART.pivot.y };
+const MUZZLE = PLAYER_ART.barrel.length * (1 - PLAYER_ART.barrel.pivotX);   // 回転軸から砲口までの長さ
+const PR = PLAYER_ART.hitRadius;
+
+// ---- 画像の読み込み ----
+function loadImg(src) {
+  const im = new Image();
+  im.onload = () => { im.ok = true; im.white = whiteVersion(im); };
+  im.onerror = () => console.warn("画像を読み込めませんでした(図形で代用します):", src);
+  im.src = src;
+  return im;
+}
+function whiteVersion(im) {   // 被弾時の白い点滅用に、同じ形の真っ白な画像を作っておく
+  const c = document.createElement("canvas"); c.width = im.naturalWidth; c.height = im.naturalHeight;
+  const g = c.getContext("2d"); g.drawImage(im, 0, 0);
+  g.globalCompositeOperation = "source-atop"; g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
+  return c;
+}
+const ART = { body: loadImg(PLAYER_ART.body.src), barrel: loadImg(PLAYER_ART.barrel.src) };
 
 // ---- 設定(config.js)から作る一覧 ----
 const EVO_OF = Object.fromEntries(EVOLUTIONS.map(v => [v.from, v]));
@@ -257,8 +278,9 @@ function update(dt) {
   // --- エイム ---
   let target = { x: mouse.x, y: mouse.y };
   if (autoAim) { const n = nearestEnemy(P); if (n) target = n; }
-  let ang = Math.atan2(target.y - P.y, target.x - P.x);
-  if (ang > 0.15 && ang < Math.PI - 0.15) ang = ang < Math.PI / 2 ? 0.15 : Math.PI - 0.15;  // 地面より下は狙えない
+  let ang = Math.atan2(target.y - AIM.y, target.x - AIM.x);
+  const down = PLAYER_ART.maxDownAngle * Math.PI / 180;   // 水平より下に向けられる限界
+  if (ang > down && ang < Math.PI - down) ang = ang < Math.PI / 2 ? down : Math.PI - down;
   S.aimAngle = ang;
 
   // --- 主砲の自動連射 ---
@@ -267,7 +289,7 @@ function update(dt) {
     S.fireCool = S.fireInt;
     for (let i = 0; i < S.multi; i++) {
       const a = ang + (i - (S.multi - 1) / 2) * 0.12;
-      fireBullet(P.x + Math.cos(a) * 26, P.y + Math.sin(a) * 26, a,
+      fireBullet(AIM.x + Math.cos(a) * MUZZLE, AIM.y + Math.sin(a) * MUZZLE, a,
         { speed: S.bulletSpeed, dmg: S.dmgMul * S.caliberMul, pierce: S.pierce, boom: S.boom, bounce: S.bounce, r: S.bulletR });
     }
     sfx.shot();
@@ -280,7 +302,7 @@ function update(dt) {
   // --- 敵弾 ---
   for (const eb of ebullets) {
     eb.x += eb.vx * dt; eb.y += eb.vy * dt; eb.life -= dt;
-    if (Math.hypot(P.x - eb.x, P.y - eb.y) < eb.r + 18) { eb.life = 0; hurtPlayer(eb.dmg); }
+    if (Math.hypot(P.x - eb.x, P.y - eb.y) < eb.r + PR - 2) { eb.life = 0; hurtPlayer(eb.dmg); }
   }
   ebullets = ebullets.filter(b => b.life > 0);
 
@@ -325,7 +347,7 @@ function update(dt) {
 
 // ---- 武装 ----
 function groundPos(side) { return { x: P.x + side * 70, y: GY - 14 }; }
-const FLAK_POS = { x: P.x, y: GY - 78 };
+const FLAK_POS = { x: P.x + 118, y: GY - 74 };   // 自機の砲身と重ならないよう右横に
 
 function updateWeapons(dt) {
   for (const id of ["ground", "flak", "mine", "missile", "thunder", "nova"]) {
@@ -379,14 +401,14 @@ function updateWeapons(dt) {
         const n = Wp.count(L);
         for (let i = 0; i < n; i++) {
           const a = -Math.PI / 2 + (i - (n - 1) / 2) * 0.5 + (Math.random() - 0.5) * 0.2;
-          fireBullet(P.x, P.y - 10, a, { kind: "missile", speed: 300, dmg: Wp.dmg(L) * S.dmgMul, r: S.evolved.missile ? 7 : 5, color: S.evolved.missile ? "#ff3d00" : "#ff8a65", life: 4, extra: { target: t, cluster: !!S.evolved.missile } });
+          fireBullet(AIM.x, AIM.y, a, { kind: "missile", speed: 300, dmg: Wp.dmg(L) * S.dmgMul, r: S.evolved.missile ? 7 : 5, color: S.evolved.missile ? "#ff3d00" : "#ff8a65", life: 4, extra: { target: t, cluster: !!S.evolved.missile } });
         }
         fired = true;
       }
     } else if (id === "thunder") {
       let cur = nearestEnemy(P, null, 400);
       if (cur) {
-        const pts = [{ x: P.x, y: P.y - 10 }], hit = new Set();
+        const pts = [{ x: AIM.x, y: AIM.y }], hit = new Set();
         for (let i = 0; i < Wp.chain(L) && cur; i++) {
           hit.add(cur); pts.push({ x: cur.x, y: cur.y });
           damageEnemy(cur, Wp.dmg(L) * S.dmgMul);
@@ -417,7 +439,7 @@ function clusterBurst(b) {
       life: 0.45 + Math.random() * 0.4, extra: { radius: E.bombletRadius } });
   }
 }
-function flakBarrel(i) { return [FLAK_POS, { x: P.x - 46, y: GY - 60 }, { x: P.x + 46, y: GY - 60 }][i] || FLAK_POS; }
+function flakBarrel(i) { return [FLAK_POS, { x: P.x - 118, y: GY - 74 }, { x: P.x + 158, y: GY - 54 }][i] || FLAK_POS; }
 
 function knockback(e, fx_, fy, amt) {
   if (e.d.boss) amt *= 0.15;
@@ -494,17 +516,17 @@ function updateEnemies(dt) {
     const k = e.d.kind;
     if (k === "ground") {
       e.x += Math.sign(P.x - e.x) * sp * dt;
-      if (Math.abs(P.x - e.x) < e.r + 20) hitPlayer(e);
+      if (Math.abs(P.x - e.x) < e.r + PR + 8) hitPlayer(e);
     } else if (k === "side") {
       e.x += Math.sign(P.x - e.x) * sp * dt;
       if (Math.abs(P.x - e.x) < 220) e.baseY += (P.y - e.baseY) * dt * 1.5 * e.spdMul;   // 近くなったら降下
       e.y = e.baseY + Math.sin(e.t * 4) * 30;
-      if (Math.hypot(P.x - e.x, P.y - e.y) < e.r + 20) hitPlayer(e);
+      if (Math.hypot(P.x - e.x, P.y - e.y) < e.r + PR) hitPlayer(e);
     } else if (k === "air") {
       const a = Math.atan2(P.y - e.y, P.x - e.x);
       e.x += (Math.cos(a) * sp + Math.cos(e.t * 2.5) * 60 * e.spdMul) * dt;
       e.y += Math.sin(a) * sp * dt;
-      if (Math.hypot(P.x - e.x, P.y - e.y) < e.r + 20) hitPlayer(e);
+      if (Math.hypot(P.x - e.x, P.y - e.y) < e.r + PR) hitPlayer(e);
     } else if (k === "hover") {
       if (e.y < e.hoverY) e.y += sp * dt;
       e.x += Math.sin(e.t * 0.8) * 40 * dt;
@@ -901,20 +923,49 @@ function drawEnemy(e) {
 
 function drawPlayer() {
   if (S.invuln > 0 && Math.floor(S.invuln * 15) % 2) ctx.globalAlpha = 0.35;   // 無敵中は点滅
-  ctx.fillStyle = "#455a64"; ctx.fillRect(P.x - 28, GY - 12, 56, 12);
-  ctx.save(); ctx.translate(P.x, P.y); ctx.rotate(S.aimAngle);
-  ctx.fillStyle = "#cfd8dc"; ctx.fillRect(0, -5 - lv("caliber") * 0.6, 30, 10 + lv("caliber") * 1.2);
-  ctx.restore();
-  ctx.beginPath(); ctx.arc(P.x, P.y, 18, 0, Math.PI * 2);
-  ctx.fillStyle = S.hurtFlash > 0 ? "#ff8a80" : "#90caf9"; ctx.fill();
-  ctx.lineWidth = 3; ctx.strokeStyle = "#1e88e5"; ctx.stroke();
+  if (ART.body.ok && ART.barrel.ok) drawPlayerArt(); else drawPlayerShapes();
   ctx.globalAlpha = 1;
   if (S.shield > 0 && !(S.shield < 2 && Math.floor(S.shield * 8) % 2)) {
-    const r = 32 + Math.sin(S.time * 6) * 2;
-    ctx.beginPath(); ctx.arc(P.x, P.y - 4, r, 0, Math.PI * 2);
+    const r = PR + 18 + Math.sin(S.time * 6) * 2;
+    ctx.beginPath(); ctx.arc(P.x, P.y - 6, r, 0, Math.PI * 2);
     ctx.fillStyle = "rgba(77,208,225,0.15)"; ctx.fill();
     ctx.lineWidth = 3; ctx.strokeStyle = "rgba(77,208,225,0.85)"; ctx.stroke();
   }
+}
+
+// 画像で描く: 本体 → 砲身 → 回転台のフタ の順に重ねる
+function drawPlayerArt() {
+  const A = PLAYER_ART, bw = A.body.width, bh = A.body.height;
+  const flash = S.hurtFlash > 0 ? Math.min(1, S.hurtFlash / 0.3) * 0.8 : 0;   // 被弾直後は白く光らせる
+  const drawLit = (im, x, y, w, h) => {
+    ctx.drawImage(im, x, y, w, h);
+    if (flash && im.white) { const a = ctx.globalAlpha; ctx.globalAlpha = a * flash; ctx.drawImage(im.white, x, y, w, h); ctx.globalAlpha = a; }
+  };
+  drawLit(ART.body, P.x - bw / 2, GY - bh, bw, bh);
+  // 砲身: 回転軸を中心に回す。左を向いているときは上下反転して、ハイライトを常に上側に保つ
+  const len = A.barrel.length, th = A.barrel.thickness * (1 + 0.06 * lv("caliber"));   // 大口径弾で太くなる
+  ctx.save(); ctx.translate(AIM.x, AIM.y); ctx.rotate(S.aimAngle);
+  if (Math.cos(S.aimAngle) < 0) ctx.scale(1, -1);
+  drawLit(ART.barrel, -len * A.barrel.pivotX, -th / 2, len, th);
+  ctx.restore();
+  // 回転台のフタ
+  const r = A.cap.radius;
+  ctx.beginPath(); ctx.arc(AIM.x, AIM.y, r, 0, Math.PI * 2);
+  ctx.fillStyle = flash ? "#ffffff" : A.cap.color; ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = A.cap.outline; ctx.stroke();
+  ctx.beginPath(); ctx.arc(AIM.x - r * 0.3, AIM.y - r * 0.32, r * 0.28, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.fill();
+}
+
+// 画像が無いときの代わり(これまでの図形)
+function drawPlayerShapes() {
+  ctx.fillStyle = "#455a64"; ctx.fillRect(P.x - 28, GY - 12, 56, 12);
+  ctx.save(); ctx.translate(AIM.x, AIM.y); ctx.rotate(S.aimAngle);
+  ctx.fillStyle = "#cfd8dc"; ctx.fillRect(0, -5 - lv("caliber") * 0.6, MUZZLE, 10 + lv("caliber") * 1.2);
+  ctx.restore();
+  ctx.beginPath(); ctx.arc(P.x, P.y, PR - 4, 0, Math.PI * 2);
+  ctx.fillStyle = S.hurtFlash > 0 ? "#ff8a80" : "#90caf9"; ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = "#1e88e5"; ctx.stroke();
 }
 
 function drawHUD() {
@@ -980,7 +1031,7 @@ function drawBombStock() {
     let near = 0; for (const e of enemies) if (e.hp > 0 && dist(e, P) < 170) near++;
     if (near >= 6 && Math.floor(performance.now() / 300) % 2) {
       ctx.textAlign = "center"; ctx.font = "bold 18px sans-serif"; ctx.fillStyle = "#f0e442";
-      ctx.strokeStyle = "#000"; ctx.lineWidth = 4; ctx.strokeText("右クリックでボム!", P.x, GY - 112); ctx.fillText("右クリックでボム!", P.x, GY - 112);
+      ctx.strokeStyle = "#000"; ctx.lineWidth = 4; ctx.strokeText("右クリックでボム!", P.x, GY - 150); ctx.fillText("右クリックでボム!", P.x, GY - 150);
     }
   }
   ctx.textAlign = "left";

@@ -156,3 +156,14 @@ const ITEMS = {
   bomb:   { label: "B", color: "#ffd54f", desc: "ボム +1" },
   shield: { label: "S", color: "#4dd0e1", desc: `${SHIELD.duration}秒間 シールド` },
 };
+
+// ---- 自機の画像(assets フォルダ) ----
+// 画像が見つからないときは、これまでの図形で描きます
+const PLAYER_ART = {
+  body:   { src: "assets/player_body.png", width: 96, height: 69 },   // 画面上の表示サイズ(px)。画像の縦横比に合わせる
+  pivot:  { x: 0.5, y: 0.078 },   // 本体画像の中で、砲身の回転軸になる位置(左上=0,0 / 右下=1,1)。いまは頭頂部の穴
+  barrel: { src: "assets/player_barrel.png", length: 52, thickness: 22, pivotX: 0.23 },  // 砲身の表示サイズと、回転軸の位置(画像の左端から何割)
+  cap:    { radius: 12, color: "#45c7f4", outline: "#0b1e4a" },     // 回転台のフタ(プログラムで描く円)
+  hitRadius: 34,                  // 自機の当たり判定の半径
+  maxDownAngle: 40,               // 砲身を水平より何度下まで向けられるか。小さいと近くの地上の敵に届かなくなる
+};
