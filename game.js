@@ -17,9 +17,9 @@ const MUZZLE = PLAYER_ART.barrel.length * (1 - PLAYER_ART.barrel.pivotX);   // �
 const PR = PLAYER_ART.hitRadius;
 
 // ---- 画像の読み込み ----
-function loadImg(src) {
+function loadImg(src, displayW) {
   const im = new Image();
-  im.onload = () => { im.ok = true; im.white = whiteVersion(im); };
+  im.onload = () => { im.ok = true; im.white = whiteVersion(im); bakePaper(im, displayW); };
   im.onerror = () => console.warn("画像を読み込めませんでした(図形で代用します):", src);
   im.src = src;
   return im;
@@ -30,7 +30,29 @@ function whiteVersion(im) {   // 被弾時の白い点滅用に、同じ形の�
   g.globalCompositeOperation = "source-atop"; g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
   return c;
 }
-const ART = { body: loadImg(PLAYER_ART.body.src), barrel: loadImg(PLAYER_ART.barrel.src) };
+// 同じ形を1色で塗りつぶした画像(影やフチの材料)
+function silhouette(src, color) {
+  const c = document.createElement("canvas"); c.width = src.naturalWidth || src.width; c.height = src.naturalHeight || src.height;
+  const g = c.getContext("2d"); g.drawImage(src, 0, 0);
+  g.globalCompositeOperation = "source-atop"; g.fillStyle = color; g.fillRect(0, 0, c.width, c.height);
+  return c;
+}
+// 紙風: 白いフチ付きの画像と、その影・白い点滅用を一度だけ作っておく(遊んでいる最中の負担を増やさないため)
+function bakePaper(im, displayW) {
+  const b = Math.ceil(PAPER.border * im.naturalWidth / displayW);
+  im.paper = bakeBorder(im, b, PAPER.borderColor);
+  im.paperGold = bakeBorder(im, b, TURRET_ART.evolvedBorder);   // 進化した砲台用
+  im.paperShadow = silhouette(im.paper, "#000"); im.paperWhite = silhouette(im.paper, "#fff");
+}
+function bakeBorder(im, b, color) {
+  const c = document.createElement("canvas"); c.width = im.naturalWidth + b * 2; c.height = im.naturalHeight + b * 2;
+  const g = c.getContext("2d"), sil = silhouette(im, color);
+  for (const rr of [b, b * 0.5]) for (let i = 0; i < 24; i++) { const a = (i / 24) * Math.PI * 2; g.drawImage(sil, b + Math.cos(a) * rr, b + Math.sin(a) * rr); }
+  g.drawImage(im, b, b);
+  return c;
+}
+const ART = { body: loadImg(PLAYER_ART.body.src, PLAYER_ART.body.width), barrel: loadImg(PLAYER_ART.barrel.src, PLAYER_ART.barrel.length) };
+const TART = { ground: loadImg(TURRET_ART.ground.src, TURRET_ART.ground.width), flak: loadImg(TURRET_ART.flak.src, TURRET_ART.flak.width) };
 
 // ---- 設定(config.js)から作る一覧 ----
 const EVO_OF = Object.fromEntries(EVOLUTIONS.map(v => [v.from, v]));
@@ -76,6 +98,7 @@ window.addEventListener("keydown", e => {
   if (k === "m") sound.muted = !sound.muted;
   if (k === "t") autoAim = !autoAim;
   if (k === "d") debug = !debug;
+  if (k === "g") PAPER.enabled = !PAPER.enabled;   // 紙風の表示を切り替え
   if ((k === " " || k === "b") && state === "play") { e.preventDefault(); useBomb(); }
   if (k === "enter") { if (state === "title") startGame(true); else if (state === "over" || state === "clear") startGame(false); }
 });
@@ -114,7 +137,7 @@ const sfx = {
 // ============================================================
 let state = "title";
 let autoAim = false, debug = false;
-let S, enemies, bullets, ebullets, gems, items, particles, texts, mines, fx, choices;
+let S, enemies, bullets, ebullets, gems, items, particles, texts, mines, fx, choices, corpses = [];
 let spawnTimer, shake, lastTime = performance.now();
 let lastInput = performance.now(), prevState = "title";
 
@@ -128,7 +151,7 @@ function startGame(withTutorial) {
   };
   recalc();
   S.hp = S.maxHp;
-  enemies = []; bullets = []; ebullets = []; gems = []; items = []; particles = []; texts = []; mines = []; fx = [];
+  enemies = []; bullets = []; ebullets = []; gems = []; items = []; particles = []; texts = []; mines = []; fx = []; corpses = [];
   spawnTimer = 1; shake = 0;
   state = "play";
   tut = null;
@@ -336,6 +359,8 @@ function update(dt) {
 
   // --- 演出 ---
   for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.92; p.vy *= 0.92; p.life -= dt; }
+  for (const c of corpses) c.t += dt;
+  corpses = corpses.filter(c => c.t < PAPER.fallTime * (c.e.d.kind === "ground" ? 1 : 1.6));
   particles = particles.filter(p => p.life > 0);
   for (const t of texts) { t.y -= 30 * dt; t.life -= dt; }
   texts = texts.filter(t => t.life > 0);
@@ -346,8 +371,20 @@ function update(dt) {
 }
 
 // ---- 武装 ----
-function groundPos(side) { return { x: P.x + side * 70, y: GY - 14 }; }
-const FLAK_POS = { x: P.x + 118, y: GY - 74 };   // 自機の砲身と重ならないよう右横に
+// 地上砲台: 左右に1基ずつ。groundPos は砲口の位置(弾が出る場所)
+function groundScale() { return S && S.evolved && S.evolved.ground ? TURRET_ART.evolvedScale : 1; }
+function groundUnit(side) {
+  const G = TURRET_ART.ground, k = groundScale(), w = G.width * k, h = G.height * k, cx = P.x + side * (G.offset + w / 2);
+  return { cx, w, h, muzzle: { x: cx + side * w / 2, y: GY - h + h * G.muzzleY } };
+}
+function groundPos(side) { return groundUnit(side).muzzle; }
+// 対空砲台: 通常は1基、高射砲陣地で3基。左側に置くものは左右反転する
+function flakUnit(i) {
+  const F = TURRET_ART.flak, off = F.positions[i] ?? F.positions[0], k = S && S.evolved && S.evolved.flak ? TURRET_ART.evolvedScale : 1;
+  const w = F.width * k, h = F.height * k, flip = off < 0, cx = P.x + off, mx = flip ? 1 - F.muzzleX : F.muzzleX;
+  return { cx, w, h, flip, muzzle: { x: cx - w / 2 + w * mx, y: GY - h + h * F.muzzleY } };
+}
+const FLAK_POS = { get x() { return flakUnit(0).muzzle.x; }, get y() { return flakUnit(0).muzzle.y; } };   // 1基目の砲口
 
 function updateWeapons(dt) {
   for (const id of ["ground", "flak", "mine", "missile", "thunder", "nova"]) {
@@ -439,7 +476,7 @@ function clusterBurst(b) {
       life: 0.45 + Math.random() * 0.4, extra: { radius: E.bombletRadius } });
   }
 }
-function flakBarrel(i) { return [FLAK_POS, { x: P.x - 118, y: GY - 74 }, { x: P.x + 158, y: GY - 54 }][i] || FLAK_POS; }
+function flakBarrel(i) { return flakUnit(i).muzzle; }
 
 function knockback(e, fx_, fy, amt) {
   if (e.d.boss) amt *= 0.15;
@@ -553,6 +590,7 @@ function killEnemy(e) {
   if (e.type === "titan") { S.finalKilled = true; banner("大巨兵 撃破!", "#ffd54f"); }
   sfx.kill();
   burst(e.x, e.y, e.color, e.d.boss ? 40 : 12);
+  if (PAPER.enabled) { e.flash = 0; corpses.push({ e, t: 0, dir: e.x < P.x ? -1 : 1 }); }   // 紙風: 倒れる動き
   const n = e.d.boss ? 10 : 1;
   for (let i = 0; i < n; i++)
     gems.push({ x: e.x, y: e.y, vx: (Math.random() - 0.5) * 160, vy: -120 - Math.random() * 120, t: 0, v: e.d.xp * e.T.xp / n });
@@ -819,25 +857,27 @@ function drawWorld() {
     ctx.fillText(I.label, it.x, it.y + 1); ctx.textBaseline = "alphabetic";
     if (it.caption) { ctx.font = "bold 13px sans-serif"; ctx.fillText(it.caption, it.x, it.y + 34); }   // チュートリアル用の説明
   }
+  for (const c of corpses) drawCorpse(c);
   for (const e of enemies) drawEnemy(e);
   for (const eb of ebullets) drawEnemyBullet(eb);
-  // 砲台
+  // 砲台(画像があれば画像、無ければ図形)
   if (lv("ground")) for (const side of [-1, 1]) {
-    const p = groundPos(side);
-    if (S.evolved.ground) { ctx.fillStyle = "#ff9100"; ctx.fillRect(p.x - 14, p.y - 12, 28, 26); ctx.fillStyle = "#ffd740"; ctx.fillRect(p.x - 14, p.y - 12, 28, 3); }
-    else { ctx.fillStyle = "#ffb74d"; ctx.fillRect(p.x - 10, p.y - 6, 20, 20); }
-    ctx.fillStyle = "#0b0d14"; ctx.font = "bold 10px sans-serif"; ctx.textAlign = "center"; ctx.fillText(lv("ground"), p.x, p.y + 8);
+    const u = groundUnit(side);
+    if (TART.ground.ok) drawTurretSprite(TART.ground, u.cx, u.w, u.h, side < 0, S.evolved.ground);   // 左側は左右反転
+    else {
+      const p = u.muzzle; p.x = u.cx;
+      if (S.evolved.ground) { ctx.fillStyle = "#ff9100"; ctx.fillRect(p.x - 14, p.y - 12, 28, 26); }
+      else { ctx.fillStyle = "#ffb74d"; ctx.fillRect(p.x - 10, p.y - 6, 20, 20); }
+    }
   }
-  if (S.evolved.flak) for (let i = 1; i < 3; i++) {
-    const p = flakBarrel(i);
-    ctx.fillStyle = "#37474f"; ctx.fillRect(p.x - 3, p.y, 6, GY - p.y);
-    ctx.fillStyle = "#18ffff"; ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, Math.PI * 2); ctx.fill();
-  }
-  if (lv("flak")) {
-    const p = FLAK_POS;
-    ctx.fillStyle = "#37474f"; ctx.fillRect(p.x - 3, p.y, 6, GY - p.y);
-    ctx.fillStyle = S.evolved.flak ? "#18ffff" : "#4dd0e1"; ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = "#0b0d14"; ctx.font = "bold 10px sans-serif"; ctx.textAlign = "center"; ctx.fillText(lv("flak"), p.x, p.y + 4);
+  if (lv("flak")) for (let i = 0; i < (S.evolved.flak ? 3 : 1); i++) {
+    const u = flakUnit(i);
+    if (TART.flak.ok) drawTurretSprite(TART.flak, u.cx, u.w, u.h, u.flip, S.evolved.flak);
+    else {
+      const p = u.muzzle;
+      ctx.fillStyle = "#37474f"; ctx.fillRect(p.x - 3, p.y, 6, GY - p.y);
+      ctx.fillStyle = S.evolved.flak ? "#18ffff" : "#4dd0e1"; ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, Math.PI * 2); ctx.fill();
+    }
   }
   // 弾
   for (const b of bullets) {
@@ -890,6 +930,13 @@ function drawEnemyBullet(eb) {
 }
 
 function drawEnemy(e) {
+  if (PAPER.enabled) return drawEnemyPaper(e);
+  drawEnemyShape(e);
+  drawEnemyMarks(e, 0);
+}
+
+// 敵の形を塗る(紙風でも従来でも共通)
+function drawEnemyShape(e) {
   ctx.fillStyle = e.flash > 0 ? "#ffffff" : e.color;
   const k = e.d.kind;
   if (k === "ground") {
@@ -909,21 +956,103 @@ function drawEnemy(e) {
     ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = "#1b5e20"; ctx.beginPath(); ctx.arc(e.x, e.y + 4, e.r * 0.45, 0, Math.PI * 2); ctx.fill();
   }
+}
+
+// 上位種の輪・減速の印・HPバー(oy = 跳ねている分の上下のずれ)
+function drawEnemyMarks(e, oy) {
   if (e.tier > 0) {   // 上位種は輪で示す。色だけに頼らないよう、段階の数だけ輪を重ねる(強化1本・精鋭2本・異形3本)
     ctx.strokeStyle = e.T.tint; ctx.lineWidth = 2;
-    for (let i = 0; i < e.tier; i++) { ctx.beginPath(); ctx.arc(e.x, e.y, e.r + 5 + i * 5, 0, Math.PI * 2); ctx.stroke(); }
+    for (let i = 0; i < e.tier; i++) { ctx.beginPath(); ctx.arc(e.x, e.y + oy, e.r + 5 + i * 5, 0, Math.PI * 2); ctx.stroke(); }
   }
-  if (e.spdMul < 1) { ctx.fillStyle = "#64b5f6"; ctx.fillRect(e.x - 3, e.y + e.r + 3, 6, 3); }  // 減速中の印
+  if (e.spdMul < 1) { ctx.fillStyle = "#64b5f6"; ctx.fillRect(e.x - 3, e.y + oy + e.r + 3, 6, 3); }  // 減速中の印
   if (e.hp < e.maxHp) {
     const w = e.r * 2;
-    ctx.fillStyle = "#000a"; ctx.fillRect(e.x - w / 2, e.y - e.r - 9, w, 4);
-    ctx.fillStyle = "#ff5252"; ctx.fillRect(e.x - w / 2, e.y - e.r - 9, w * Math.max(0, e.hp / e.maxHp), 4);
+    ctx.fillStyle = "#000a"; ctx.fillRect(e.x - w / 2, e.y + oy - e.r - 9, w, 4);
+    ctx.fillStyle = "#ff5252"; ctx.fillRect(e.x - w / 2, e.y + oy - e.r - 9, w * Math.max(0, e.hp / e.maxHp), 4);
   }
+}
+
+// 敵の外形(紙風の白フチと影に使う)
+function enemyPath(e) {
+  const p = new Path2D(), k = e.d.kind;
+  if (k === "ground") p.rect(e.x - e.r, e.y - e.r, e.r * 2, e.r * 2);
+  else if (k === "side") {
+    const wing = Math.sin(e.t * 18) * 8;
+    p.moveTo(e.x - e.r * 1.8, e.y + wing); p.lineTo(e.x, e.y - 4); p.lineTo(e.x + e.r * 1.8, e.y + wing); p.lineTo(e.x, e.y + e.r); p.closePath();
+  } else if (k === "air") { p.moveTo(e.x, e.y + e.r * 1.3); p.lineTo(e.x - e.r, e.y - e.r); p.lineTo(e.x + e.r, e.y - e.r); p.closePath(); }
+  else p.arc(e.x, e.y, e.r, 0, Math.PI * 2);
+  return p;
+}
+
+// 紙の人形らしい姿勢: 地上の敵は跳ねながら進み、空の敵はひらひら傾く。被弾するとつぶれる
+function enemyPose(e) {
+  const k = e.d.kind, pose = { hop: 0, rot: 0, sx: 1, sy: 1, ax: e.x, ay: e.y };
+  if (k === "ground") {
+    pose.ay = e.y + e.r;   // 足元を基準に変形する
+    const moving = e.speed > 0 && e.spdMul > 0;
+    if (moving) pose.hop = Math.abs(Math.sin(e.t * PAPER.hop.speed * e.spdMul)) * PAPER.hop.height * (e.d.boss ? 0.6 : 1);
+    if (moving && pose.hop < 1.2) { pose.sx = 1.08; pose.sy = 0.92; }   // 着地の瞬間にむにっとつぶれる
+  } else if (k === "air") pose.rot = Math.sin(e.t * 3) * 0.18;
+  else if (k === "side") pose.rot = Math.sin(e.t * 4) * 0.1;
+  else if (k === "hover") pose.rot = Math.sin(e.t * 2) * 0.08;
+  if (e.flash > 0) { pose.sx *= 1.15; pose.sy *= 0.85; }
+  return pose;
+}
+
+function paperTransform(pose) {
+  ctx.translate(pose.ax, pose.ay - pose.hop); ctx.rotate(pose.rot); ctx.scale(pose.sx, pose.sy); ctx.translate(-pose.ax, -pose.ay);
+}
+
+// 白いフチと影を付けて描く
+function paperOutline(path, withShadow) {
+  ctx.lineJoin = "round"; ctx.lineWidth = PAPER.border * 2;
+  if (withShadow) {
+    ctx.save(); ctx.translate(PAPER.shadow.dx, PAPER.shadow.dy);
+    ctx.fillStyle = ctx.strokeStyle = `rgba(0,0,0,${PAPER.shadow.alpha})`; ctx.fill(path); ctx.stroke(path);
+    ctx.restore();
+  }
+  ctx.strokeStyle = PAPER.borderColor; ctx.stroke(path);
+}
+
+function drawEnemyPaper(e) {
+  const pose = enemyPose(e);
+  if (e.d.kind === "ground") {   // 地面に落ちる影(跳ねると小さく薄くなる)
+    const f = 1 - pose.hop / 30;
+    ctx.fillStyle = `rgba(0,0,0,${0.3 * f})`; ctx.beginPath(); ctx.ellipse(e.x, GY + 1, e.r * 1.1 * f, 4, 0, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.save(); paperTransform(pose);
+  paperOutline(enemyPath(e), true);
+  drawEnemyShape(e);
+  ctx.restore();
+  drawEnemyMarks(e, -pose.hop);
+}
+
+// 撃破された敵: 地上の敵はぴょんと浮いてから奥へパタンと倒れ、空の敵はくるくる回りながら落ちる
+function drawCorpse(c) {
+  const e = c.e, life = PAPER.fallTime * (e.d.kind === "ground" ? 1 : 1.6), k = Math.min(1, c.t / life);
+  ctx.save();
+  ctx.globalAlpha = k < 0.7 ? 1 : (1 - k) / 0.3;
+  if (e.d.kind === "ground") {
+    const ax = e.x, ay = e.y + e.r, pop = Math.sin(Math.min(1, k * 2.5) * Math.PI) * 10;
+    ctx.translate(ax, ay - pop); ctx.transform(1, 0, c.dir * 0.4 * k, 1, 0, 0); ctx.scale(1, Math.max(0.02, Math.cos(k * Math.PI / 2))); ctx.translate(-ax, -ay);
+  } else {
+    const fall = 900 * c.t * c.t / 2 - 120 * c.t;
+    ctx.translate(e.x + c.dir * 40 * k, e.y + fall); ctx.rotate(c.dir * k * 3); ctx.scale(1, Math.cos(k * Math.PI * 2)); ctx.translate(-e.x, -e.y);
+  }
+  paperOutline(enemyPath(e), false);
+  drawEnemyShape(e);
+  ctx.restore();
 }
 
 function drawPlayer() {
   if (S.invuln > 0 && Math.floor(S.invuln * 15) % 2) ctx.globalAlpha = 0.35;   // 無敵中は点滅
-  if (ART.body.ok && ART.barrel.ok) drawPlayerArt(); else drawPlayerShapes();
+  if (ART.body.ok && ART.barrel.ok) {
+    if (PAPER.enabled && ART.body.paper) {
+      ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.beginPath(); ctx.ellipse(P.x, GY + 1, PLAYER_ART.body.width * 0.52, 6, 0, 0, Math.PI * 2); ctx.fill();
+      drawPlayerArt("shadow");
+    }
+    drawPlayerArt("main");
+  } else drawPlayerShapes();
   ctx.globalAlpha = 1;
   if (S.shield > 0 && !(S.shield < 2 && Math.floor(S.shield * 8) % 2)) {
     const r = PR + 18 + Math.sin(S.time * 6) * 2;
@@ -934,12 +1063,34 @@ function drawPlayer() {
 }
 
 // 画像で描く: 本体 → 砲身 → 回転台のフタ の順に重ねる
-function drawPlayerArt() {
+// 地面に置く砲台の画像を描く(紙風なら白フチ・影付き。進化していれば金フチ)
+function drawTurretSprite(im, cx, w, h, flip, evolved) {
+  const paper = PAPER.enabled && !!im.paper, pad = paper ? PAPER.border : 0, x = cx - w / 2, y = GY - h;
+  const put = (src, dx, dy) => {
+    ctx.save(); ctx.translate(cx + dx, 0); if (flip) ctx.scale(-1, 1);
+    ctx.drawImage(src, -w / 2 - pad, y + dy - pad, w + pad * 2, h + pad * 2); ctx.restore();
+  };
+  if (paper) {
+    ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.beginPath(); ctx.ellipse(cx, GY + 1, w * 0.5, 4, 0, 0, Math.PI * 2); ctx.fill();
+    const a = ctx.globalAlpha; ctx.globalAlpha = a * PAPER.shadow.alpha; put(im.paperShadow, PAPER.shadow.dx, PAPER.shadow.dy); ctx.globalAlpha = a;
+    put(evolved ? im.paperGold : im.paper, 0, 0);
+  } else {
+    put(im, 0, 0);
+    if (evolved) { ctx.fillStyle = TURRET_ART.evolvedBorder; ctx.fillRect(x, GY - 3, w, 3); }   // 進化の印
+  }
+}
+
+// pass: "shadow" = 紙の影だけを描く / "main" = 本体を描く
+function drawPlayerArt(pass = "main") {
   const A = PLAYER_ART, bw = A.body.width, bh = A.body.height;
-  const flash = S.hurtFlash > 0 ? Math.min(1, S.hurtFlash / 0.3) * 0.8 : 0;   // 被弾直後は白く光らせる
+  const paper = PAPER.enabled && !!ART.body.paper, pad = paper ? PAPER.border : 0, shadow = pass === "shadow";
+  const flash = !shadow && S.hurtFlash > 0 ? Math.min(1, S.hurtFlash / 0.3) * 0.8 : 0;   // 被弾直後は白く光らせる
+  if (shadow) { ctx.save(); ctx.translate(PAPER.shadow.dx, PAPER.shadow.dy); ctx.globalAlpha *= PAPER.shadow.alpha; }
   const drawLit = (im, x, y, w, h) => {
-    ctx.drawImage(im, x, y, w, h);
-    if (flash && im.white) { const a = ctx.globalAlpha; ctx.globalAlpha = a * flash; ctx.drawImage(im.white, x, y, w, h); ctx.globalAlpha = a; }
+    const src = shadow ? im.paperShadow : paper ? im.paper : im;
+    ctx.drawImage(src, x - pad, y - pad, w + pad * 2, h + pad * 2);
+    const wh = paper ? im.paperWhite : im.white;
+    if (flash && wh) { const a = ctx.globalAlpha; ctx.globalAlpha = a * flash; ctx.drawImage(wh, x - pad, y - pad, w + pad * 2, h + pad * 2); ctx.globalAlpha = a; }
   };
   drawLit(ART.body, P.x - bw / 2, GY - bh, bw, bh);
   // 砲身: 回転軸を中心に回す。左を向いているときは上下反転して、ハイライトを常に上側に保つ
@@ -950,6 +1101,8 @@ function drawPlayerArt() {
   ctx.restore();
   // 回転台のフタ
   const r = A.cap.radius;
+  if (shadow) { ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(AIM.x, AIM.y, r + pad, 0, Math.PI * 2); ctx.fill(); ctx.restore(); return; }
+  if (paper) { ctx.fillStyle = PAPER.borderColor; ctx.beginPath(); ctx.arc(AIM.x, AIM.y, r + pad, 0, Math.PI * 2); ctx.fill(); }
   ctx.beginPath(); ctx.arc(AIM.x, AIM.y, r, 0, Math.PI * 2);
   ctx.fillStyle = flash ? "#ffffff" : A.cap.color; ctx.fill();
   ctx.lineWidth = 3; ctx.strokeStyle = A.cap.outline; ctx.stroke();
@@ -1002,7 +1155,7 @@ function drawHUD() {
   ctx.fillStyle = "#cfd8dc"; ctx.fillText(`Lv ${S.level}   撃破 ${S.kills}`, W - 16, 50);
   if (S.shield > 0) { ctx.fillStyle = "#4dd0e1"; ctx.fillText(`シールド ${S.shield.toFixed(1)}s`, W - 16, 70); }
   ctx.textAlign = "left"; ctx.fillStyle = "#78909c"; ctx.font = "12px sans-serif";
-  ctx.fillText(`[T] エイム: ${autoAim ? "オート" : "マウス"}   [P] ポーズ   [M] 音 ${sound.muted ? "OFF" : "ON"}   [D] 数値表示`, 16, H - 16);
+  ctx.fillText(`[T] エイム: ${autoAim ? "オート" : "マウス"}   [P] ポーズ   [M] 音 ${sound.muted ? "OFF" : "ON"}   [G] 紙風 ${PAPER.enabled ? "ON" : "OFF"}   [D] 数値表示`, 16, H - 16);
   if (tut) drawTutorial();
   drawBanner();
   if (debug) drawDebug();

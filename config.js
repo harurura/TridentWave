@@ -167,3 +167,27 @@ const PLAYER_ART = {
   hitRadius: 34,                  // 自機の当たり判定の半径
   maxDownAngle: 40,               // 砲身を水平より何度下まで向けられるか。小さいと近くの地上の敵に届かなくなる
 };
+
+// ---- 紙風の表示(ペーパーマリオ風) ----
+// ゲーム中に G キーでも切り替えられます
+const PAPER = {
+  enabled: true,                              // false にすると従来の表示
+  border: 3,                                  // 白いフチの太さ(画面上px)
+  borderColor: "#ffffff",
+  shadow: { dx: 4, dy: 4, alpha: 0.35 },      // 紙の影(右下にずらす量と濃さ)
+  hop: { height: 6, speed: 9 },               // 地上の敵が歩くときに跳ねる高さ(px)と速さ
+  fallTime: 0.45,                             // 撃破されて倒れきるまでの秒数
+};
+
+// ---- 砲台の画像(assets フォルダ) ----
+// 画像が見つからないときは、これまでの図形で描きます
+const TURRET_ART = {
+  ground: { src: "assets/turret_ground.png", width: 60, height: 33,   // 地上砲台の表示サイズ(px)。画像は右向きで描く(左側の砲台は左右反転して使う)
+            offset: 50,                                             // 自機の中心から砲台の内側の端までの距離
+            muzzleY: 0.535 },                                       // 砲口の高さ(画像の上端から何割)
+  flak:   { src: "assets/turret_flak.png", width: 44, height: 50,     // 対空砲台の表示サイズ(px)
+            muzzleX: 0.6, muzzleY: 0.04,                            // 砲口の位置(画像の左上から何割)
+            positions: [150, -150, 206] },  // 自機の中心からの距離。1つ目が通常、2・3つ目は高射砲陣地で追加。マイナスは左側(左右反転して描く)
+  evolvedScale: 1.2,          // 進化した砲台の大きさの倍率
+  evolvedBorder: "#ffd740",   // 進化した砲台のフチの色(紙風のとき)
+};
