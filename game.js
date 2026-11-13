@@ -45,7 +45,8 @@ function bakePaper(im, displayW) {
   im.paperShadow = silhouette(im.paper, "#000"); im.paperWhite = silhouette(im.paper, "#fff");
 }
 function bakeBorder(im, b, color) {
-  const c = document.createElement("canvas"); c.width = im.naturalWidth + b * 2; c.height = im.naturalHeight + b * 2;
+  const iw = im.naturalWidth || im.width, ih = im.naturalHeight || im.height;
+  const c = document.createElement("canvas"); c.width = iw + b * 2; c.height = ih + b * 2;
   const g = c.getContext("2d"), sil = silhouette(im, color);
   for (const rr of [b, b * 0.5]) for (let i = 0; i < 24; i++) { const a = (i / 24) * Math.PI * 2; g.drawImage(sil, b + Math.cos(a) * rr, b + Math.sin(a) * rr); }
   g.drawImage(im, b, b);
@@ -53,6 +54,65 @@ function bakeBorder(im, b, color) {
 }
 const ART = { body: loadImg(PLAYER_ART.body.src, PLAYER_ART.body.width), barrel: loadImg(PLAYER_ART.barrel.src, PLAYER_ART.barrel.length) };
 const TART = { ground: loadImg(TURRET_ART.ground.src, TURRET_ART.ground.width), flak: loadImg(TURRET_ART.flak.src, TURRET_ART.flak.width) };
+
+// 敵の画像: 段階ごとに色を重ねた版と、その白フチ・影・白い点滅用を読み込み時に作っておく
+function tinted(im, color, amount) {
+  const c = document.createElement("canvas"); c.width = im.naturalWidth; c.height = im.naturalHeight;
+  const g = c.getContext("2d"); g.drawImage(im, 0, 0);
+  g.globalCompositeOperation = "source-atop"; g.globalAlpha = amount; g.fillStyle = color; g.fillRect(0, 0, c.width, c.height);
+  return c;
+}
+function loadEnemyImg(a) {
+  const im = new Image();
+  im.onload = () => {
+    im.dispW = a.height * im.naturalWidth / im.naturalHeight;   // 画面上の幅
+    const b = Math.ceil(PAPER.border * im.naturalHeight / a.height);
+    im.tiers = TIERS.map((T, i) => {
+      const base = i ? tinted(im, T.tint, ENEMY_TINT) : im;
+      const paper = bakeBorder(base, b, PAPER.borderColor);
+      return { plain: base, paper, shadow: silhouette(paper, "#000"), white: silhouette(base, "#fff"), paperWhite: silhouette(paper, "#fff") };
+    });
+    im.ok = true;
+  };
+  im.onerror = () => console.warn("画像を読み込めませんでした(図形で代用します):", a.src);
+  im.src = a.src;
+  return im;
+}
+const EART = Object.fromEntries(Object.entries(ENEMY_ART).map(([k, a]) => [k, loadEnemyImg(a)]));
+
+// 背景: 読み込み時に一度だけ、ぼかし・暗さを調整した画像を作っておく(遊んでいる最中は貼るだけ)
+function loadBg(B) {
+  const im = new Image();
+  im.onload = () => {
+    const c = document.createElement("canvas"); c.width = W; c.height = H;
+    const g = c.getContext("2d");
+    const hasFilter = "filter" in g;
+    if (hasFilter) g.filter = `blur(${B.blur}px) brightness(${B.brightness}) saturate(${B.saturate})`;
+    // 左右半分に分けて外側へずらし、下端を地面の少し下に合わせる
+    const nw = im.naturalWidth, nh = im.naturalHeight, s = (W / nw) * (B.scale ?? 1), dw = nw * s, dh = nh * s;
+    const x0 = (W - dw) / 2, y0 = GY + (B.sinkY ?? 0) - dh, sp = B.spread ?? 0;
+    g.drawImage(im, 0, 0, nw / 2, nh, x0 - sp, y0, dw / 2, dh);
+    g.drawImage(im, nw / 2, 0, nw / 2, nh, x0 + dw / 2 + sp, y0, dw / 2, dh);
+    if (hasFilter) g.filter = "none";
+    g.globalCompositeOperation = "source-atop";   // 以下は描いた絵の上だけを暗くする
+    if (!hasFilter) { g.fillStyle = `rgba(0,0,0,${1 - B.brightness})`; g.fillRect(0, 0, W, H); }   // ぼかしが使えないブラウザでは暗くするだけ
+    if (B.floorShade) {   // 地面近く(敵が歩く高さ)を暗くして、手前の敵を浮かせる
+      const fg = g.createLinearGradient(0, GY - 140, 0, GY);
+      fg.addColorStop(0, "rgba(0,0,0,0)"); fg.addColorStop(1, `rgba(0,0,0,${B.floorShade})`);
+      g.fillStyle = fg; g.fillRect(0, GY - 140, W, H);
+    }
+    if (B.centerShade) {  // 中央(自機のまわり)を暗くする
+      const cg = g.createLinearGradient(W / 2 - 300, 0, W / 2 + 300, 0);
+      cg.addColorStop(0, "rgba(0,0,0,0)"); cg.addColorStop(0.5, `rgba(0,0,0,${B.centerShade})`); cg.addColorStop(1, "rgba(0,0,0,0)");
+      g.fillStyle = cg; g.fillRect(0, 0, W, H);
+    }
+    im.baked = c; im.ok = true;
+  };
+  im.onerror = () => console.warn("背景を読み込めませんでした:", B.src);
+  im.src = B.src;
+  return im;
+}
+const BG = { middle: loadBg(BG_ART.middle) };
 
 // ---- 設定(config.js)から作る一覧 ----
 const EVO_OF = Object.fromEntries(EVOLUTIONS.map(v => [v.from, v]));
@@ -210,6 +270,12 @@ function spawnEnemy(type, forceSide, forceTier) {
     e.x = 120 + Math.random() * (W - 240); e.y = -e.r;
   } else if (d.kind === "hover") {
     e.x = 100 + Math.random() * (W - 200); e.y = -e.r; e.hoverY = 70 + Math.random() * 70;
+  }
+  const art = EART[type];
+  if (art && art.ok) {   // 絵のある敵: 見た目と当たり判定を絵に合わせる
+    const k = 1 + tier * 0.1, A = ENEMY_ART[type];
+    e.art = art; e.artH = A.height * k; e.artW = art.dispW * k; e.r = A.hitR * k;
+    if (d.kind === "ground") e.y = GY - e.artH / 2;   // 足の裏を地面に
   }
   enemies.push(e);
   return e;
@@ -805,6 +871,7 @@ function draw() {
   const grd = ctx.createLinearGradient(0, 0, 0, GY);
   grd.addColorStop(0, "#0f1424"); grd.addColorStop(1, "#1c2340");
   ctx.fillStyle = grd; ctx.fillRect(-20, -20, W + 40, GY + 20);
+  if (BG.middle.ok) ctx.drawImage(BG.middle.baked, 0, 0);   // 背景の中層(本棚やおもちゃ)
   ctx.fillStyle = "#2a2f45"; ctx.fillRect(-20, GY, W + 40, H - GY + 20);
   ctx.fillStyle = "#3a4060"; ctx.fillRect(-20, GY, W + 40, 3);
   ctx.fillStyle = "rgba(255,255,255,0.06)"; ctx.font = "bold 64px sans-serif"; ctx.textAlign = "center";
@@ -931,8 +998,20 @@ function drawEnemyBullet(eb) {
 
 function drawEnemy(e) {
   if (PAPER.enabled) return drawEnemyPaper(e);
-  drawEnemyShape(e);
+  if (e.art) drawEnemyArt(e, false, false); else drawEnemyShape(e);
   drawEnemyMarks(e, 0);
+}
+
+// 敵の絵を描く。右から来る敵は左右反転して自機の方を向かせる
+function drawEnemyArt(e, paper, withShadow) {
+  const v = e.art.tiers[e.tier] || e.art.tiers[0], w = e.artW, h = e.artH, pad = paper ? PAPER.border : 0, flip = e.x > P.x;
+  const put = (src, dx, dy) => {
+    ctx.save(); ctx.translate(e.x + dx, e.y + dy); if (flip) ctx.scale(-1, 1);
+    ctx.drawImage(src, -w / 2 - pad, -h / 2 - pad, w + pad * 2, h + pad * 2); ctx.restore();
+  };
+  if (withShadow) { const a = ctx.globalAlpha; ctx.globalAlpha = a * PAPER.shadow.alpha; put(v.shadow, PAPER.shadow.dx, PAPER.shadow.dy); ctx.globalAlpha = a; }
+  put(paper ? v.paper : v.plain, 0, 0);
+  if (e.flash > 0) put(paper ? v.paperWhite : v.white, 0, 0);
 }
 
 // 敵の形を塗る(紙風でも従来でも共通)
@@ -962,13 +1041,14 @@ function drawEnemyShape(e) {
 function drawEnemyMarks(e, oy) {
   if (e.tier > 0) {   // 上位種は輪で示す。色だけに頼らないよう、段階の数だけ輪を重ねる(強化1本・精鋭2本・異形3本)
     ctx.strokeStyle = e.T.tint; ctx.lineWidth = 2;
-    for (let i = 0; i < e.tier; i++) { ctx.beginPath(); ctx.arc(e.x, e.y + oy, e.r + 5 + i * 5, 0, Math.PI * 2); ctx.stroke(); }
+    const rr = e.art ? Math.max(e.r, e.artH * 0.5) : e.r;   // 絵のある敵は絵を囲む大きさに
+    for (let i = 0; i < e.tier; i++) { ctx.beginPath(); ctx.arc(e.x, e.y + oy, rr + 5 + i * 5, 0, Math.PI * 2); ctx.stroke(); }
   }
   if (e.spdMul < 1) { ctx.fillStyle = "#64b5f6"; ctx.fillRect(e.x - 3, e.y + oy + e.r + 3, 6, 3); }  // 減速中の印
   if (e.hp < e.maxHp) {
-    const w = e.r * 2;
-    ctx.fillStyle = "#000a"; ctx.fillRect(e.x - w / 2, e.y + oy - e.r - 9, w, 4);
-    ctx.fillStyle = "#ff5252"; ctx.fillRect(e.x - w / 2, e.y + oy - e.r - 9, w * Math.max(0, e.hp / e.maxHp), 4);
+    const w = e.r * 2, top = e.art ? e.artH / 2 : e.r;   // HPバーは見た目の上端の上
+    ctx.fillStyle = "#000a"; ctx.fillRect(e.x - w / 2, e.y + oy - top - 9, w, 4);
+    ctx.fillStyle = "#ff5252"; ctx.fillRect(e.x - w / 2, e.y + oy - top - 9, w * Math.max(0, e.hp / e.maxHp), 4);
   }
 }
 
@@ -988,7 +1068,7 @@ function enemyPath(e) {
 function enemyPose(e) {
   const k = e.d.kind, pose = { hop: 0, rot: 0, sx: 1, sy: 1, ax: e.x, ay: e.y };
   if (k === "ground") {
-    pose.ay = e.y + e.r;   // 足元を基準に変形する
+    pose.ay = e.art ? e.y + e.artH / 2 : e.y + e.r;   // 足元を基準に変形する
     const moving = e.speed > 0 && e.spdMul > 0;
     if (moving) pose.hop = Math.abs(Math.sin(e.t * PAPER.hop.speed * e.spdMul)) * PAPER.hop.height * (e.d.boss ? 0.6 : 1);
     if (moving && pose.hop < 1.2) { pose.sx = 1.08; pose.sy = 0.92; }   // 着地の瞬間にむにっとつぶれる
@@ -1021,8 +1101,8 @@ function drawEnemyPaper(e) {
     ctx.fillStyle = `rgba(0,0,0,${0.3 * f})`; ctx.beginPath(); ctx.ellipse(e.x, GY + 1, e.r * 1.1 * f, 4, 0, 0, Math.PI * 2); ctx.fill();
   }
   ctx.save(); paperTransform(pose);
-  paperOutline(enemyPath(e), true);
-  drawEnemyShape(e);
+  if (e.art) drawEnemyArt(e, true, true);
+  else { paperOutline(enemyPath(e), true); drawEnemyShape(e); }
   ctx.restore();
   drawEnemyMarks(e, -pose.hop);
 }
@@ -1033,14 +1113,14 @@ function drawCorpse(c) {
   ctx.save();
   ctx.globalAlpha = k < 0.7 ? 1 : (1 - k) / 0.3;
   if (e.d.kind === "ground") {
-    const ax = e.x, ay = e.y + e.r, pop = Math.sin(Math.min(1, k * 2.5) * Math.PI) * 10;
+    const ax = e.x, ay = e.art ? e.y + e.artH / 2 : e.y + e.r, pop = Math.sin(Math.min(1, k * 2.5) * Math.PI) * 10;
     ctx.translate(ax, ay - pop); ctx.transform(1, 0, c.dir * 0.4 * k, 1, 0, 0); ctx.scale(1, Math.max(0.02, Math.cos(k * Math.PI / 2))); ctx.translate(-ax, -ay);
   } else {
     const fall = 900 * c.t * c.t / 2 - 120 * c.t;
     ctx.translate(e.x + c.dir * 40 * k, e.y + fall); ctx.rotate(c.dir * k * 3); ctx.scale(1, Math.cos(k * Math.PI * 2)); ctx.translate(-e.x, -e.y);
   }
-  paperOutline(enemyPath(e), false);
-  drawEnemyShape(e);
+  if (e.art) drawEnemyArt(e, PAPER.enabled, false);
+  else { paperOutline(enemyPath(e), false); drawEnemyShape(e); }
   ctx.restore();
 }
 

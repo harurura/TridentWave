@@ -191,3 +191,24 @@ const TURRET_ART = {
   evolvedScale: 1.2,          // 進化した砲台の大きさの倍率
   evolvedBorder: "#ffd740",   // 進化した砲台のフチの色(紙風のとき)
 };
+
+// ---- 敵の画像(assets フォルダ) ----
+// 画像を登録した敵だけが絵になる。登録していない敵はこれまでの図形のまま
+// height: 画面上の高さ(幅は画像の縦横比から自動) / hitR: 当たり判定の半径
+const ENEMY_ART = {
+  grunt: { src: "assets/enemy_grunt.png", height: 44, hitR: 16 },   // ゼンマイ歩行ロボ
+};
+const ENEMY_TINT = 0.45;   // 上位種の色を絵に重ねる濃さ(0〜1)
+
+// ---- 背景の画像 ----
+// 読み込み時に一度だけ、ぼかし・明るさ・彩度を調整して使う
+const BG_ART = {
+  // 中層(本棚やおもちゃ)。前のパターンに戻すときは src を "assets/bg_middle_flat.png"、spread と sinkY を 0 にする
+  middle: { src: "assets/bg_middle.png", blur: 2.5, brightness: 0.42, saturate: 0.8,
+            scale: 1,          // 大きさ(1 = 画面の横幅いっぱい)
+            spread: 80,        // 画像を左右半分に分けて、それぞれ外側へずらす距離(px)。中央の自機まわりを空ける
+            sinkY: 30,         // 画像の下端を地面の線より何px下に沈めるか(手前の床に隠れる分)
+            floorShade: 0.45,  // 地面近く(敵が歩く高さ)を暗くする強さ(0〜1)
+            centerShade: 0.35, // 中央(自機のまわり)を暗くする強さ(0〜1)
+  },
+};
