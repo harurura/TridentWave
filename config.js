@@ -130,7 +130,7 @@ const CARDS = [
   { id: "learn",   type: "passive", name: "学習回路", desc: () => `獲得経験値 +${PASSIVE.learn * 100}%` },
   // ---- 補充(上限なし。候補が足りないときやHPが減ったときに出る) ----
   { id: "heal",    type: "filler", name: "緊急修理", desc: () => "HPを30%回復" },
-  { id: "bombup",  type: "filler", name: "ボム補充", desc: () => "ボムのストック +1" },
+  { id: "bombup",  type: "filler", name: "ボム補充", desc: () => "ボムのストック +1" },   // 今は候補に出さない(ボムは最初の1個とドロップだけ)
 ];
 
 // ============================================================
@@ -196,7 +196,15 @@ const TURRET_ART = {
 // 画像を登録した敵だけが絵になる。登録していない敵はこれまでの図形のまま
 // height: 画面上の高さ(幅は画像の縦横比から自動) / hitR: 当たり判定の半径
 const ENEMY_ART = {
-  grunt: { src: "assets/enemy_grunt.png", height: 44, hitR: 16 },   // ゼンマイ歩行ロボ
+  grunt:   { src: "assets/enemy_grunt.png",   height: 44,  hitR: 16 },   // 歩兵: ゼンマイ歩行ロボ
+  runner:  { src: "assets/enemy_runner.png",  height: 40,  hitR: 14 },   // 突撃兵: 一輪車ロボ
+  brute:   { src: "assets/enemy_brute.png",   height: 60,  hitR: 26 },   // 重装兵: 重装ブリキロボ
+  bat:     { src: "assets/enemy_bat.png",     height: 32,  hitR: 15 },   // 左右から飛ぶ: プロペラドローン
+  diver:   { src: "assets/enemy_diver.png",   height: 42,  hitR: 15 },   // 上から降る: パラシュートロボ
+  spitter: { src: "assets/enemy_spitter.png", height: 52,  hitR: 18 },   // 浮いて撃つ: 小型飛行船
+  boss:    { src: "assets/enemy_boss.png",    height: 110, hitR: 45 },   // 巨兵: 巨大ブリキロボ
+  titan:   { src: "assets/enemy_titan.png",   height: 150, hitR: 65 },   // 大巨兵: 要塞ロボ
+  dummy:   { src: "assets/enemy_dummy.png",   height: 40,  hitR: 18 },   // チュートリアルの的: 射的の的
 };
 const ENEMY_TINT = 0.45;   // 上位種の色を絵に重ねる濃さ(0〜1)
 
@@ -211,4 +219,47 @@ const BG_ART = {
             floorShade: 0.45,  // 地面近く(敵が歩く高さ)を暗くする強さ(0〜1)
             centerShade: 0.35, // 中央(自機のまわり)を暗くする強さ(0〜1)
   },
+};
+
+// ---- 熱量(うまく戦うほど敵が増え、スコアの倍率も上がる) ----
+// 今の難しさが下限(×1.0)。敵を素早く倒すと上がり、被弾したり囲まれたりすると下がる
+const HEAT = {
+  min: 1.0, max: 6.0,       // 熱量の範囲
+  gainPerKill: 0.005,       // 敵を1体倒すごとに上がる量
+  fastKillTime: 5,          // 出現からこの秒数以内に倒すと「素早い撃破」
+  fastBonus: 2.5,           // 素早い撃破では上がる量がこの倍
+  decayPerSec: 0.015,       // 何もしなくても少しずつ下がる量(1秒あたり)
+  hurtDrop: 0.3,            // 被弾したときに下がる量
+  crowdRadius: 170,         // 自機からこの距離以内に…
+  crowdCount: 8,            // …この数以上の敵がいると「囲まれている」
+  crowdDropPerSec: 0.1,     // 囲まれているあいだ下がる量(1秒あたり)
+  spawnBoost: 0.8,          // 熱量が1上がるごとに、敵の出現がこれだけ速くなる(×6.0で出現の速さ5倍)
+  hpBoost: 1.0,             // 熱量が1上がるごとに、新しく出る敵のHPがこれだけ増える(×6.0でHP6倍)
+  bombDrop: 1.0,            // ボムを使うと下がる量(ボムで倒した敵では熱量は上がらない)
+};
+
+// ---- スコア ----
+// 敵を倒した点数 = 敵の経験値 × 段階の経験値倍率 × perXp × その時の熱量
+const SCORE = {
+  perXp: 100,               // 経験値1あたりの点数
+  bossBonus: 2000,          // 巨兵を倒したときの追加点(×熱量)
+  titanBonus: 10000,        // 大巨兵を倒したときの追加点(×熱量)
+  clearBonus: 5000,         // クリアしたときの追加点
+  hpBonus: 50,              // クリア時に残ったHP 1あたりの追加点
+};
+
+// ---- 処理の重さ対策 ----
+const PERF = {
+  maxEnemies: 120,       // 画面に同時に出る敵の上限(これを超える分は出現しない)
+  maxParticles: 300,     // 破片の上限
+  maxCorpses: 60,        // 倒れる動きを同時に見せる上限(超えた分はすぐ消える)
+  spriteQuality: 1.5,    // 敵の画像を、表示サイズの何倍の細かさで用意しておくか(大きいほどきれいで重い)
+  soundGapMs: 45,        // 同じ効果音を続けて鳴らすときの最短の間隔(ミリ秒)
+};
+
+// ---- ビルドが完成した後のレベルアップ ----
+// 取れるカードが無くなったら、選択画面を出さずに自動で受け取る
+const LEVEL_BONUS = {
+  score: 1500,           // スコア(× その時の熱量)
+  heal: 10,              // HP回復
 };

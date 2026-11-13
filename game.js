@@ -57,7 +57,7 @@ const TART = { ground: loadImg(TURRET_ART.ground.src, TURRET_ART.ground.width), 
 
 // 敵の画像: 段階ごとに色を重ねた版と、その白フチ・影・白い点滅用を読み込み時に作っておく
 function tinted(im, color, amount) {
-  const c = document.createElement("canvas"); c.width = im.naturalWidth; c.height = im.naturalHeight;
+  const c = document.createElement("canvas"); c.width = im.naturalWidth || im.width; c.height = im.naturalHeight || im.height;
   const g = c.getContext("2d"); g.drawImage(im, 0, 0);
   g.globalCompositeOperation = "source-atop"; g.globalAlpha = amount; g.fillStyle = color; g.fillRect(0, 0, c.width, c.height);
   return c;
@@ -66,9 +66,13 @@ function loadEnemyImg(a) {
   const im = new Image();
   im.onload = () => {
     im.dispW = a.height * im.naturalWidth / im.naturalHeight;   // 画面上の幅
-    const b = Math.ceil(PAPER.border * im.naturalHeight / a.height);
+    // 毎回大きな画像を縮めて描くと重いので、表示サイズ(×spriteQuality)に縮めた画像を作っておく
+    const q = PERF.spriteQuality, small = document.createElement("canvas");
+    small.width = Math.round(im.dispW * q * 1.3); small.height = Math.round(a.height * q * 1.3);   // 上位種は最大1.3倍に大きくなる
+    const sg = small.getContext("2d"); sg.imageSmoothingQuality = "high"; sg.drawImage(im, 0, 0, small.width, small.height);
+    const b = Math.ceil(PAPER.border * small.height / a.height);
     im.tiers = TIERS.map((T, i) => {
-      const base = i ? tinted(im, T.tint, ENEMY_TINT) : im;
+      const base = i ? tinted(small, T.tint, ENEMY_TINT) : small;
       const paper = bakeBorder(base, b, PAPER.borderColor);
       return { plain: base, paper, shadow: silhouette(paper, "#000"), white: silhouette(base, "#fff"), paperWhite: silhouette(paper, "#fff") };
     });
@@ -178,16 +182,19 @@ const sound = {
     o.connect(g).connect(this.ac.destination); o.start(t); o.stop(t + dur);
   },
 };
+// 同じ効果音を短い間隔で何度も鳴らすと重くなるので、間を空ける
+const lastSound = {};
+function throttled(name, f) { return () => { const now = performance.now(); if (now - (lastSound[name] || 0) < PERF.soundGapMs) return; lastSound[name] = now; f(); }; }
 const sfx = {
   shot: () => sound.play(880, 0.05, "square", 0.012, -400),
-  hit: () => sound.play(220, 0.06, "triangle", 0.03, -100),
-  kill: () => sound.play(160, 0.15, "sawtooth", 0.035, -120),
+  hit: throttled("hit", () => sound.play(220, 0.06, "triangle", 0.03, -100)),
+  kill: throttled("kill", () => sound.play(160, 0.15, "sawtooth", 0.035, -120)),
   hurt: () => sound.play(90, 0.3, "sawtooth", 0.08, -50),
-  gem: () => sound.play(1200, 0.06, "sine", 0.025, 300),
+  gem: throttled("gem", () => sound.play(1200, 0.06, "sine", 0.025, 300)),
   lvl: () => { sound.play(523, 0.12, "square", 0.05); setTimeout(() => sound.play(784, 0.18, "square", 0.05), 110); },
   item: () => sound.play(660, 0.25, "sine", 0.06, 600),
   bomb: () => sound.play(60, 0.6, "sawtooth", 0.12, -20),
-  boom: () => sound.play(100, 0.2, "sawtooth", 0.04, -60),
+  boom: throttled("boom", () => sound.play(100, 0.2, "sawtooth", 0.04, -60)),
   zap: () => sound.play(1500, 0.08, "square", 0.025, -1200),
   nova: () => sound.play(200, 0.35, "sine", 0.07, -150),
 };
@@ -208,6 +215,7 @@ function startGame(withTutorial) {
     cards: {}, wcool: {}, evolved: {}, bombs: BOMB.start,
     fireCool: 0, shield: 0, invuln: 0, hurtFlash: 0, aimAngle: -Math.PI / 2,
     tierShown: 0, bossDone: {}, finalSpawned: false, finalKilled: false, banner: null,
+    score: 0, heat: HEAT.min, maxHeat: HEAT.min, clearBonus: null,
   };
   recalc();
   S.hp = S.maxHp;
@@ -257,10 +265,10 @@ function spawnEnemy(type, forceSide, forceTier) {
   const d = ENEMY[type];
   const tier = forceTier != null ? forceTier : rollTier();
   const T = TIERS[tier];
-  const hp = d.hp * T.hp;
+  const hp = d.hp * T.hp * (S && !tut ? 1 + (S.heat - HEAT.min) * HEAT.hpBoost : 1);   // 熱量が高いと少し硬くなる
   const e = { type, d, tier, T, hp, maxHp: hp, r: d.r * (1 + tier * 0.1), speed: d.speed * (0.9 + Math.random() * 0.2),
               color: tier ? mixColor(d.color, T.tint, 0.55) : d.color,
-              flash: 0, t: Math.random() * 10, cool: 2 + Math.random(), spdMul: 1 };
+              flash: 0, t: Math.random() * 10, age: 0, cool: 2 + Math.random(), spdMul: 1 };
   const side = forceSide || (Math.random() < 0.5 ? "L" : "R");
   if (d.kind === "ground") {
     e.x = side === "L" ? -e.r : W + e.r; e.y = GY - e.r;
@@ -309,6 +317,7 @@ function fireBullet(x, y, ang, o) {
 }
 
 function burst(x, y, color, n = 10, sp = 160) {
+  n = Math.min(n, PERF.maxParticles - particles.length);   // 上限を超えない
   for (let i = 0; i < n; i++) {
     const a = Math.random() * Math.PI * 2, v = sp * (0.3 + Math.random());
     particles.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0.5 + Math.random() * 0.3, color });
@@ -340,7 +349,13 @@ function update(dt) {
   if (S.banner) { S.banner.life -= dt; if (S.banner.life <= 0) S.banner = null; }
 
   // --- クリア判定 ---
-  if (S.time >= FINAL.clearAt) { state = "clear"; sfx.lvl(); return; }
+  if (S.time >= FINAL.clearAt) {
+    const hpB = Math.ceil(Math.max(0, S.hp)) * SCORE.hpBonus;
+    S.clearBonus = { clear: SCORE.clearBonus, hp: hpB };
+    S.score += SCORE.clearBonus + hpB;
+    state = "clear"; sfx.lvl(); return;
+  }
+  if (!tut) updateHeat(dt);
   if (tut) updateTutorial(dt);
 
   // --- 段階の切り替わり(告知 + 巨兵) ---
@@ -358,10 +373,10 @@ function update(dt) {
   // --- 敵の出現 ---
   if (!tut) spawnTimer -= dt;
   if (spawnTimer <= 0) {
-    const interval = Math.max(SPAWN.minInterval, SPAWN.startInterval - S.time * SPAWN.rampPerSec);
+    const interval = Math.max(SPAWN.minInterval, SPAWN.startInterval - S.time * SPAWN.rampPerSec) / heatSpawnMul();
     spawnTimer = interval * (0.7 + Math.random() * 0.6);
     const n = 1 + Math.floor(S.time / SPAWN.batchEvery);
-    for (let i = 0; i < n; i++) spawnEnemy(pickEnemyType());
+    for (let i = 0; i < n && enemies.length < PERF.maxEnemies; i++) spawnEnemy(pickEnemyType());
   }
 
   // --- エイム ---
@@ -613,7 +628,7 @@ function updateEnemies(dt) {
   const slowR = slowL ? WEAPON.slow.radius(slowL) : 0, slowF = slowL ? WEAPON.slow.factor(slowL) : 0;
   for (const e of enemies) {
     if (e.hp <= 0) continue;
-    e.t += dt; e.flash = Math.max(0, e.flash - dt);
+    e.t += dt; e.age += dt; e.flash = Math.max(0, e.flash - dt);
     e.spdMul = slowL && dist(e, P) < slowR + e.r ? 1 - slowF : 1;
     const sp = e.speed * e.spdMul;
     const k = e.d.kind;
@@ -636,13 +651,24 @@ function updateEnemies(dt) {
       e.cool -= dt;
       if (e.cool <= 0 && e.y >= e.hoverY - 1) {
         e.cool = 3.2;
-        const a = Math.atan2(P.y - e.y, P.x - e.x);
-        ebullets.push({ x: e.x, y: e.y, vx: Math.cos(a) * 130, vy: Math.sin(a) * 130, r: 7, life: 8, dmg: Math.round(10 * e.T.dmg) });
+        const my = e.y + (e.art ? e.artH * 0.42 : 0);   // 絵のある砲撃手は下の砲口から撃つ
+        const a = Math.atan2(P.y - my, P.x - e.x);
+        ebullets.push({ x: e.x, y: my, vx: Math.cos(a) * 130, vy: Math.sin(a) * 130, r: 7, life: 8, dmg: Math.round(10 * e.T.dmg) });
       }
     }
   }
   enemies = enemies.filter(e => e.hp > 0);
 }
+
+// 熱量: 時間で少しずつ下がり、囲まれているとさらに下がる
+function updateHeat(dt) {
+  let near = 0;
+  for (const e of enemies) if (e.hp > 0 && dist(e, P) < HEAT.crowdRadius) near++;
+  let drop = HEAT.decayPerSec;
+  if (near >= HEAT.crowdCount) drop += HEAT.crowdDropPerSec;
+  S.heat = Math.max(HEAT.min, S.heat - drop * dt);
+}
+function heatSpawnMul() { return 1 + (S.heat - HEAT.min) * HEAT.spawnBoost; }
 
 function damageEnemy(e, dmg) {
   if (e.hp <= 0) return;
@@ -653,13 +679,22 @@ function damageEnemy(e, dmg) {
 
 function killEnemy(e) {
   S.kills++;
+  if (!tut) {   // スコア(熱量が倍率)と熱量の上昇
+    let pts = e.d.xp * e.T.xp * SCORE.perXp;
+    if (e.type === "boss") pts += SCORE.bossBonus; else if (e.type === "titan") pts += SCORE.titanBonus;
+    pts = Math.round(pts * S.heat / 10) * 10;
+    S.score += pts;
+    if (e.d.boss) floatText(e.x, e.y - e.r - 20, `+${pts.toLocaleString()}`, "#f0e442");
+    if (!bombing) S.heat = Math.min(HEAT.max, S.heat + HEAT.gainPerKill * (e.age <= HEAT.fastKillTime ? HEAT.fastBonus : 1));   // ボムで倒した分は上げない
+    S.maxHeat = Math.max(S.maxHeat, S.heat);
+  }
   if (e.type === "titan") { S.finalKilled = true; banner("大巨兵 撃破!", "#ffd54f"); }
   sfx.kill();
   burst(e.x, e.y, e.color, e.d.boss ? 40 : 12);
-  if (PAPER.enabled) { e.flash = 0; corpses.push({ e, t: 0, dir: e.x < P.x ? -1 : 1 }); }   // 紙風: 倒れる動き
+  if (PAPER.enabled && corpses.length < PERF.maxCorpses) { e.flash = 0; corpses.push({ e, t: 0, dir: e.x < P.x ? -1 : 1 }); }   // 紙風: 倒れる動き
   const n = e.d.boss ? 10 : 1;
   for (let i = 0; i < n; i++)
-    gems.push({ x: e.x, y: e.y, vx: (Math.random() - 0.5) * 160, vy: -120 - Math.random() * 120, t: 0, v: e.d.xp * e.T.xp / n });
+    gems.push({ x: e.x, y: e.y, vx: (Math.random() - 0.5) * 160, vy: -120 - Math.random() * 120, t: 0, v: e.d.xp * e.T.xp / n / (tut ? 1 : heatSpawnMul()) });   // 熱量で増えた敵の分は経験値にしない
   // アイテムドロップ
   if (Math.random() < (e.d.boss ? 1 : 0.05)) {
     const keys = Object.keys(ITEMS);
@@ -691,6 +726,7 @@ function hurtPlayer(raw) {
   floatText(P.x, P.y - 40, "-" + dmg, "#ff8a80");
   // 無敵時間を付け、周りの敵を押し返す(ダメージなし)
   S.invuln = HURT.invuln;
+  if (!tut) S.heat = Math.max(HEAT.min, S.heat - HEAT.hurtDrop);   // 被弾で熱量が下がる
   for (const e of enemies) if (e.hp > 0 && dist(e, P) < HURT.pushRadius + e.r) knockback(e, P.x, P.y, HURT.push);
   fx.push({ type: "ring", r: HURT.pushRadius, life: 0.3, max: 0.3, color: "255,138,128" });
   return "hit";
@@ -711,9 +747,13 @@ function useBomb() {
   sfx.bomb(); shake = 14;
   fx.push({ type: "flash", life: 0.25, max: 0.25 });
   const dmg = BOMB.dmgPerTierHp * TIERS[currentTier()].hp;
+  bombing = true;
   for (const e of enemies) damageEnemy(e, dmg);
+  bombing = false;
+  if (!tut) S.heat = Math.max(HEAT.min, S.heat - HEAT.bombDrop);
   ebullets = [];
 }
+let bombing = false;   // ボムで倒している最中か
 
 function collectItem(it) {
   it.dead = true; sfx.item();
@@ -762,7 +802,14 @@ function openLevelUp() {
   const pick = EVOLUTIONS.filter(v => !S.evolved[v.from] && lv(v.from) >= CARD_RULES.maxLevel && lv(v.with) >= CARD_RULES.maxLevel)
     .slice(0, 3).map(v => ({ id: "evo_" + v.id, type: "evolve", name: v.name, evo: v, desc: () => v.desc }));
   while (pick.length < 3 && avail.length) pick.push(rand(avail));
-  const fillers = [CARD.heal, CARD.bombup];
+  // ビルドが完成して取れるカードが無いときは、選択画面を出さずにボーナスを受け取る
+  if (!pick.length && !tut) {
+    const pts = Math.round(LEVEL_BONUS.score * S.heat / 10) * 10;
+    S.score += pts; S.hp = Math.min(S.maxHp, S.hp + LEVEL_BONUS.heal);
+    floatText(P.x, P.y - 60, `LEVEL UP  +${pts.toLocaleString()}`, "#69f0ae"); sfx.gem();
+    return;
+  }
+  const fillers = [CARD.heal];   // 足りない枠は回復だけで埋める(ボム補充は出さない)
   while (pick.length < 3 && fillers.length) pick.push(rand(fillers));
   // HPが減っていたら回復を候補に混ぜる
   if (S.hp < S.maxHp * 0.5 && !pick.includes(CARD.heal)) {
@@ -884,8 +931,8 @@ function draw() {
   if (state !== "title") drawHUD();
   if (state === "levelup") drawLevelUp();
   if (state === "pause") drawCenter("PAUSE", "P / Esc で再開");
-  if (state === "over") drawCenter("GAME OVER", `生存 ${fmtTime(S.time)} ・ Lv ${S.level} ・ 撃破 ${S.kills}\n${buildText()}\nクリック / Enter: リトライ    Esc: タイトルへ(次の人へ交代)${idleNote()}`);
-  if (state === "clear") drawCenter("CLEAR!", `${clearMinutes()}分間 生き残った! ・ Lv ${S.level} ・ 撃破 ${S.kills}\n大巨兵: ${S.finalKilled ? "撃破" : "撃破ならず"}\n${buildText()}\nクリック / Enter: もう一度    Esc: タイトルへ(次の人へ交代)${idleNote()}`);
+  if (state === "over") drawCenter("GAME OVER", `スコア ${S.score.toLocaleString()}   最高熱量 ×${S.maxHeat.toFixed(1)}\n生存 ${fmtTime(S.time)} ・ Lv ${S.level} ・ 撃破 ${S.kills}\n${buildText()}\nクリック / Enter: リトライ    Esc: タイトルへ(次の人へ交代)${idleNote()}`);
+  if (state === "clear") drawCenter("CLEAR!", `スコア ${S.score.toLocaleString()}   最高熱量 ×${S.maxHeat.toFixed(1)}\n(クリアボーナス +${(S.clearBonus?.clear ?? 0).toLocaleString()} ・ 残りHP +${(S.clearBonus?.hp ?? 0).toLocaleString()})\n${clearMinutes()}分間 生き残った! ・ Lv ${S.level} ・ 撃破 ${S.kills}\n大巨兵: ${S.finalKilled ? "撃破" : "撃破ならず"}\n${buildText()}\nクリック / Enter: もう一度    Esc: タイトルへ(次の人へ交代)${idleNote()}`);
   drawCrosshair();
 }
 
@@ -1236,6 +1283,7 @@ function drawHUD() {
   if (S.shield > 0) { ctx.fillStyle = "#4dd0e1"; ctx.fillText(`シールド ${S.shield.toFixed(1)}s`, W - 16, 70); }
   ctx.textAlign = "left"; ctx.fillStyle = "#78909c"; ctx.font = "12px sans-serif";
   ctx.fillText(`[T] エイム: ${autoAim ? "オート" : "マウス"}   [P] ポーズ   [M] 音 ${sound.muted ? "OFF" : "ON"}   [G] 紙風 ${PAPER.enabled ? "ON" : "OFF"}   [D] 数値表示`, 16, H - 16);
+  if (!tut) drawScoreHeat();
   if (tut) drawTutorial();
   drawBanner();
   if (debug) drawDebug();
@@ -1349,6 +1397,20 @@ function drawCenter(title, sub) {
   for (const l of sub.split("\n")) y = wrapText(l, W / 2, y, W - 120, 26) + 4;
 }
 
+// 画面上部の中央: スコアと熱量
+function drawScoreHeat() {
+  const cx = W / 2, k = (S.heat - HEAT.min) / (HEAT.max - HEAT.min);
+  ctx.textAlign = "center"; ctx.font = "bold 22px sans-serif"; ctx.fillStyle = "#ffffff";
+  ctx.fillText(S.score.toLocaleString(), cx, 30);
+  const bw = 180, bx = cx - bw / 2, by = 40;
+  ctx.fillStyle = "#000a"; ctx.fillRect(bx, by, bw, 8);
+  ctx.fillStyle = k < 0.33 ? "#f0e442" : k < 0.66 ? "#e69f00" : "#d55e00"; ctx.fillRect(bx, by, bw * k, 8);
+  ctx.strokeStyle = "#ffffff55"; ctx.lineWidth = 1; ctx.strokeRect(bx, by, bw, 8);
+  ctx.font = "bold 12px sans-serif"; ctx.fillStyle = "#e0e0e0"; ctx.textAlign = "left";
+  ctx.fillText(`熱量 ×${S.heat.toFixed(1)}`, bx + bw + 8, by + 8);
+  ctx.textAlign = "left";
+}
+
 function drawBanner() {
   const b = S.banner; if (!b) return;
   ctx.globalAlpha = Math.min(1, b.life);
@@ -1359,13 +1421,14 @@ function drawBanner() {
 
 function drawDebug() {   // [D]キーで表示。数値調整の目安
   const fi = S.fireInt;
-  const interval = Math.max(SPAWN.minInterval, SPAWN.startInterval - S.time * SPAWN.rampPerSec);
+  const interval = Math.max(SPAWN.minInterval, SPAWN.startInterval - S.time * SPAWN.rampPerSec) / heatSpawnMul();
   const shares = TIERS.map((T, i) => { let p = tierShare(i); for (let j = i + 1; j < TIERS.length; j++) p *= 1 - tierShare(j); return p; });
   const lines = [
     `主砲の秒間ダメージ目安: ${(S.dmgMul * S.caliberMul * S.multi / fi).toFixed(1)}(全弾命中時)`,
     `1発: ${(S.dmgMul * S.caliberMul).toFixed(2)} / 弾数 ${S.multi} / 貫通 ${S.pierce} / 跳弾 ${S.bounce}`,
     `出現間隔: ${interval.toFixed(2)}秒 × ${1 + Math.floor(S.time / SPAWN.batchEvery)}体 / 画面上の敵 ${enemies.length}体`,
     `次のレベルまで: ${Math.ceil(S.xpNext - S.xp)} / ${S.xpNext}(経験値×${S.xpMul.toFixed(2)})`,
+    `熱量 ×${S.heat.toFixed(2)} → 出現の速さ ×${heatSpawnMul().toFixed(2)}`,
     ...TIERS.map((T, i) => `${T.name}(HP×${T.hp}): ${Math.round(shares[i] * 100)}%`),
   ];
   ctx.fillStyle = "rgba(0,0,0,0.65)"; ctx.fillRect(W - 330, 80, 320, 14 + lines.length * 17);
