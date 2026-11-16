@@ -57,7 +57,12 @@ const LEVEL = { base: 6, perLevel: 4, pow: 1.4 };
 const CARD_RULES = { weaponSlots: 4, passiveSlots: 4, maxLevel: 5 };
 
 // ---- ボム ----
-const BOMB = { start: 1, max: 3, dmgPerTierHp: 12 };  // ダメージ = 12 × その時点の段階のHP倍率
+const BOMB = {
+  start: 1,             // 最初に持っているボムの数
+  max: 4,               // 持てるボムの上限
+  dmgPerTierHp: 12,     // ダメージ = 12 × その時点の段階のHP倍率
+  fullBonus: 1000,      // 上限まで持っているときにボムを取ると、代わりにもらえるスコア(× その時の熱量)
+};
 
 // ---- シールド(アイテム S) ----
 const SHIELD = { duration: 8 };   // ダメージを受けない時間(秒)

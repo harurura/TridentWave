@@ -759,12 +759,17 @@ function collectItem(it) {
   it.dead = true; sfx.item();
   const I = ITEMS[it.type];
   burst(it.x, it.y, I.color, 16);
-  floatText(it.x, it.y - 20, I.desc, I.color);
+  const bombFull = it.type === "bomb" && S.bombs >= BOMB.max;
+  if (!bombFull) floatText(it.x, it.y - 20, I.desc, I.color);
   if (it.type === "heart") S.hp = Math.min(S.maxHp, S.hp + 25);
   if (it.type === "shield") S.shield = SHIELD.duration;
   if (it.type === "bomb") {
-    if (S.bombs < BOMB.max) S.bombs++;
-    else { S.bombs++; useBomb(); }   // ストックが満タンならその場で発動
+    if (!bombFull) S.bombs++;
+    else {   // 上限まで持っているときは発動せず、スコアのボーナスに変わる
+      const pts = Math.round(BOMB.fullBonus * (tut ? 1 : S.heat) / 10) * 10;
+      if (!tut) S.score += pts;
+      floatText(it.x, it.y - 20, `ボム満タン +${pts.toLocaleString()}`, I.color);
+    }
   }
 }
 
