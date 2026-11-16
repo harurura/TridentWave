@@ -363,7 +363,8 @@ function spawnEnemy(type, forceSide, forceTier) {
   const d = ENEMY[type];
   const tier = forceTier != null ? forceTier : rollTier();
   const T = TIERS[tier];
-  const hp = d.hp * T.hp * (S && !tut ? 1 + (S.heat - HEAT.min) * HEAT.hpBoost : 1);   // 熱量が高いと少し硬くなる
+  const hpBoost = type === "titan" ? HEAT.titanHpBoost : HEAT.hpBoost;   // 大巨兵は熱量で硬くなる割合を弱める
+  const hp = d.hp * T.hp * (S && !tut ? 1 + (S.heat - HEAT.min) * hpBoost : 1);   // 熱量が高いと少し硬くなる
   const e = { type, d, tier, T, hp, maxHp: hp, r: d.r * (1 + tier * 0.1), speed: d.speed * (0.9 + Math.random() * 0.2),
               color: tier ? mixColor(d.color, T.tint, 0.55) : d.color,
               flash: 0, t: Math.random() * 10, age: 0, cool: 2 + Math.random(), spdMul: 1 };
