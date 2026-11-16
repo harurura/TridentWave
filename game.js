@@ -118,6 +118,104 @@ function loadBg(B) {
 }
 const BG = { middle: loadBg(BG_ART.middle) };
 
+// ---- 背景: 子ども部屋のジオラマ(壁・床・小物を読み込み時に1枚へ焼き付ける) ----
+const ROOM = { imgs: {}, pending: 0, failed: false, ready: false, baked: [], cur: -1, prev: -1, fade: 1, last: 0 };
+function roomImg(src) {
+  if (ROOM.imgs[src]) return;
+  const im = new Image(); ROOM.pending++;
+  const done = () => { if (--ROOM.pending === 0) bakeRoom(); };
+  im.onload = done;
+  im.onerror = () => { ROOM.failed = true; console.warn("背景の画像を読み込めませんでした(前の背景を使います):", src); done(); };
+  im.src = src; ROOM.imgs[src] = im;
+}
+if (BG_ROOM.enable) {
+  roomImg(BG_ROOM.wall.src); roomImg(BG_ROOM.floor.src);
+  BG_ROOM.props.forEach(p => roomImg(p.src));
+  if (BG_ROOM.front?.enable) roomImg(BG_ROOM.front.src);
+}
+function newCanvas() { const c = document.createElement("canvas"); c.width = W; c.height = H; return c; }
+
+function bakeRoom() {
+  if (ROOM.failed) return;
+  const R = BG_ROOM, I = ROOM.imgs;
+  const raw = newCanvas(), g = raw.getContext("2d");
+  // 壁: 右半分はそのまま、左半分は左右反転して、まん中でつなぐ(窓が左右に1つずつ)
+  const wim = I[R.wall.src], ws = R.wall.height / wim.naturalHeight, ww = wim.naturalWidth * ws;
+  g.drawImage(wim, W / 2, 0, ww, R.wall.height);
+  g.save(); g.translate(W / 2, 0); g.scale(-1, 1); g.drawImage(wim, 0, 0, ww, R.wall.height); g.restore();
+  // 床: 1行ずつ、手前ほど大きく貼って遠近感を出す
+  const F = R.floor, fim = I[F.src], tw = fim.naturalWidth, th = fim.naturalHeight, D0 = F.top - F.vanishY;
+  for (let y = F.top; y < H; y++) {
+    const d = y + 0.5 - F.vanishY, k = d / D0;
+    const v = Math.floor((D0 / F.plank) * 1.6 * (1 - D0 / d));   // 奥ほど板が詰まって見える
+    const row = ((v % th) + th) % th, dw = tw * F.plank * k;
+    let x = W / 2 - dw / 2; while (x > 0) x -= dw;
+    for (; x < W; x += dw) g.drawImage(fim, 0, row, tw, 1, x, y, dw + 1, 1);
+  }
+  const sg = g.createLinearGradient(0, F.top, 0, F.top + 50);   // 壁ぎわの影
+  sg.addColorStop(0, `rgba(40,20,10,${F.wallShadow})`); sg.addColorStop(1, "rgba(40,20,10,0)");
+  g.fillStyle = sg; g.fillRect(0, F.top, W, 50);
+  // 小物: 奥(yが小さい)から順に置く。床に影を落とす
+  [...R.props].sort((a, b) => a.y - b.y).forEach(p => {
+    const im = I[p.src], w = p.h * im.naturalWidth / im.naturalHeight;
+    if (!p.noShadow) {
+      g.fillStyle = "rgba(40,20,10,0.35)";
+      g.beginPath(); g.ellipse(p.x, p.y - 2, w * 0.48, Math.max(4, p.h * 0.06), 0, 0, Math.PI * 2); g.fill();
+    }
+    g.save(); g.translate(p.x, 0); if (p.flip) g.scale(-1, 1);
+    g.drawImage(im, -w / 2, p.y - p.h, w, p.h); g.restore();
+  });
+  // ぼかし・彩度は1回だけ(重い処理なので段階ごとには行わない)
+  const room = newCanvas(), rg = room.getContext("2d"), hasFilter = "filter" in rg;
+  if (hasFilter) rg.filter = `blur(${R.blur}px) saturate(${R.saturate})`;
+  rg.drawImage(raw, 0, 0);
+  if (R.front?.enable) {   // 手前の積み木: 左下と右下に、強めにぼかして置く
+    const fr = I[R.front.src], s = R.front.h / fr.naturalHeight, hw = fr.naturalWidth / 2, y0 = H - R.front.h + R.front.sinkY;
+    if (hasFilter) rg.filter = `blur(${R.front.blur}px) saturate(${R.saturate})`;
+    rg.globalAlpha = R.front.alpha;
+    rg.drawImage(fr, 0, 0, hw, fr.naturalHeight, 0, y0, hw * s, R.front.h);
+    rg.drawImage(fr, hw, 0, hw, fr.naturalHeight, W - hw * s, y0, hw * s, R.front.h);
+    rg.globalAlpha = 1;
+  }
+  if (hasFilter) rg.filter = "none";
+  // 段階ごとの完成画像: 空 → 部屋(段階の明るさと色をかける)
+  ROOM.baked = R.tiers.map((T, i) => {
+    const c = newCanvas(), cg = c.getContext("2d");
+    const sky = cg.createLinearGradient(0, 0, 0, R.wall.height);
+    sky.addColorStop(0, T.sky[0]); sky.addColorStop(1, T.sky[1]);
+    cg.fillStyle = sky; cg.fillRect(0, 0, W, R.wall.height);
+    if (T.stars) {
+      let seed = 7 + i;
+      const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+      cg.fillStyle = "rgba(255,255,230,0.9)";
+      for (let n = 0; n < 160; n++) { const r = rnd() < 0.15 ? 1.6 : 0.9; cg.beginPath(); cg.arc(rnd() * W, rnd() * R.wall.height, r, 0, Math.PI * 2); cg.fill(); }
+      if (i === R.tiers.length - 1) {   // 夜は右の窓に月を出す
+        cg.fillStyle = "#fff6c8"; cg.beginPath(); cg.arc(W - 105, 95, 17, 0, Math.PI * 2); cg.fill();
+      }
+    }
+    cg.fillStyle = "rgba(0,0,0,0.25)"; cg.fillRect(0, 0, W, R.wall.height);   // 空も少しだけ暗く
+    const lit = newCanvas(), lg = lit.getContext("2d");
+    lg.drawImage(room, 0, 0);
+    lg.globalCompositeOperation = "source-atop";   // 部屋の絵の上だけを暗くする(窓の外の空はそのまま)
+    lg.fillStyle = `rgba(0,0,0,${1 - T.bright})`; lg.fillRect(0, 0, W, H);
+    lg.fillStyle = T.tint; lg.fillRect(0, 0, W, H);
+    cg.drawImage(lit, 0, 0);
+    return c;
+  });
+  ROOM.ready = true;
+}
+
+function drawRoom() {   // 段階が変わったら、前の段階の絵からゆっくり切り替える
+  const now = performance.now(), dt = Math.min(0.1, (now - (ROOM.last || now)) / 1000); ROOM.last = now;
+  const t = Math.min(ROOM.baked.length - 1, state === "title" ? 0 : currentTier());
+  if (t !== ROOM.cur) { ROOM.prev = ROOM.cur; ROOM.cur = t; ROOM.fade = ROOM.prev < 0 || t < ROOM.prev ? 1 : 0; }
+  ROOM.fade = Math.min(1, ROOM.fade + dt / BG_ROOM.fadeSec);
+  if (ROOM.fade < 1) {
+    ctx.drawImage(ROOM.baked[ROOM.prev], 0, 0);
+    ctx.globalAlpha = ROOM.fade; ctx.drawImage(ROOM.baked[ROOM.cur], 0, 0); ctx.globalAlpha = 1;
+  } else ctx.drawImage(ROOM.baked[ROOM.cur], 0, 0);
+}
+
 // ---- 設定(config.js)から作る一覧 ----
 const EVO_OF = Object.fromEntries(EVOLUTIONS.map(v => [v.from, v]));
 const CARD = Object.fromEntries(CARDS.map(c => [c.id, c]));
@@ -435,7 +533,7 @@ function update(dt) {
   gems = gems.filter(g => !g.dead);
 
   // --- アイテム(ゆっくり漂って消える) ---
-  for (const it of items) { it.t += dt; it.y += Math.sin(it.t * 2) * 10 * dt; it.x += it.vx * dt; if (it.t > 7 && !it.tut) it.dead = true; }   // チュートリアルのアイテムは消えない
+  for (const it of items) { it.t += dt; if (it.lock > 0) it.lock -= dt; it.y += Math.sin(it.t * 2) * 10 * dt; it.x += it.vx * dt; if (it.t > 7 && !it.tut) it.dead = true; }   // チュートリアルのアイテムは消えない
   items = items.filter(i => !i.dead);
 
   // --- 演出 ---
@@ -601,7 +699,7 @@ function updateBullets(dt) {
     if (b.life <= 0) continue;
 
     if (b.kind === "main") {
-      for (const it of items) if (!it.dead && Math.hypot(it.x - b.x, it.y - b.y) < 16 + b.r) collectItem(it);  // アイテムは主砲で撃って取る
+      for (const it of items) if (!it.dead && !(it.lock > 0) && Math.hypot(it.x - b.x, it.y - b.y) < 16 + b.r) collectItem(it);  // アイテムは主砲で撃って取る
       for (const eb of ebullets) if (eb.life > 0 && Math.hypot(eb.x - b.x, eb.y - b.y) < eb.r + b.r) { eb.life = 0; burst(eb.x, eb.y, ENEMY_BULLET_COLOR, 5, 80); }
     }
 
@@ -679,13 +777,13 @@ function damageEnemy(e, dmg) {
 
 function killEnemy(e) {
   S.kills++;
-  if (!tut) {   // スコア(熱量が倍率)と熱量の上昇
+  if (!tut || tut.heatOn) {   // スコア(熱量が倍率)と熱量の上昇(チュートリアルでは熱量の手順だけ)
     let pts = e.d.xp * e.T.xp * SCORE.perXp;
     if (e.type === "boss") pts += SCORE.bossBonus; else if (e.type === "titan") pts += SCORE.titanBonus;
     pts = Math.round(pts * S.heat / 10) * 10;
     S.score += pts;
     if (e.d.boss) floatText(e.x, e.y - e.r - 20, `+${pts.toLocaleString()}`, "#f0e442");
-    if (!bombing) S.heat = Math.min(HEAT.max, S.heat + HEAT.gainPerKill * (e.age <= HEAT.fastKillTime ? HEAT.fastBonus : 1));   // ボムで倒した分は上げない
+    if (!bombing) S.heat = Math.min(HEAT.max, S.heat + (tut ? TUT_HEAT_GAIN : HEAT.gainPerKill * (e.age <= HEAT.fastKillTime ? HEAT.fastBonus : 1)));   // ボムで倒した分は上げない
     S.maxHeat = Math.max(S.maxHeat, S.heat);
   }
   if (e.type === "titan") { S.finalKilled = true; banner("大巨兵 撃破!", "#ffd54f"); }
@@ -855,12 +953,14 @@ const TUTORIAL = [
     update(dt) { if (tut.wait > 0 && (tut.wait -= dt) <= 0 && S.level === tut.lv0) { S.xp = Math.max(S.xp, S.xpNext); gainXp(0); } },
     done: () => tut.chosen },
   { title: "アイテムは撃って取る",
-    text: "浮かんでいるアイテムは、撃つと手に入ります。3つとも取ってみよう",
+    text: () => tut.qt < TUT_ITEM_LOCK
+      ? `♥ = HP回復 ・ S = ${SHIELD.duration}秒間 無敵のシールド ・ B = ボム+1(4個まで)`
+      : "浮かんでいるアイテムは、撃つと手に入ります。3つとも取ってみよう",
     start() {
       S.hp = Math.min(S.hp, Math.round(S.maxHp * 0.6));   // ♥の効果が分かるようにHPを減らしておく
       S.bombs = Math.min(S.bombs, BOMB.max - 1);           // Bを取ったときにストックが増えるのが見えるように
       for (const [type, x, y, caption] of [["heart", P.x - 270, 290, "HPを回復"], ["shield", P.x + 130, 320, ""], ["bomb", P.x + 300, 235, "ボムのストック+1"]])
-        items.push({ type, x, y, vx: 0, t: 0, tut: true, caption: type === "shield" ? `${SHIELD.duration}秒間 無敵のシールド` : caption });
+        items.push({ type, x, y, vx: 0, t: 0, tut: true, lock: TUT_ITEM_LOCK, caption: type === "shield" ? `${SHIELD.duration}秒間 無敵のシールド` : caption });
     },
     done: () => !items.some(i => i.tut) },
   { title: "ボムで切り抜ける",
@@ -868,7 +968,23 @@ const TUTORIAL = [
     start() { S.bombs = Math.max(S.bombs, 1); tutCrowd(); },
     update() { if (!tut.bombUsed && enemies.length === 0) { S.bombs = Math.max(S.bombs, 1); tutCrowd(); } },
     done: () => tut.bombUsed },
+  { title: "熱量とスコア",
+    text: () => S.heat < TUT_HEAT_GOAL
+      ? "敵を素早く倒すと、画面上の「熱量」が上がる。熱量が上がるまで倒そう"
+      : "熱量が高いほど敵は増えて硬くなるが、スコアも倍増。被弾すると下がる",
+    start() {
+      S.heat = HEAT.min; tut.heatOn = true;
+      tut.queue = [["grunt", "L", 0.3], ["grunt", "R", 0.8], ["runner", "L", 1.4], ["grunt", "R", 1.9], ["diver", null, 2.4], ["grunt", "L", 3.0], ["runner", "R", 3.5], ["grunt", "L", 4.0]];
+    },
+    update(dt) {
+      if (S.heat >= TUT_HEAT_GOAL) tut.heatShown += dt;   // 目標に届いたら、説明を読む時間をとる
+      else if (!tut.queue.length && enemies.length < 2) { tut.qt = 0; tut.queue = [["grunt", "L", 0.2], ["grunt", "R", 0.6], ["runner", "L", 1.0], ["diver", null, 1.4]]; }   // 届くまで敵を出し続ける
+    },
+    done: () => tut.heatShown > 4 },
 ];
+const TUT_ITEM_LOCK = 2.5;   // チュートリアルのアイテムが取れるようになるまでの秒数(説明を読む時間)
+const TUT_HEAT_GOAL = 1.6;   // チュートリアルで熱量をここまで上げたら次へ
+const TUT_HEAT_GAIN = 0.1;   // チュートリアルでは1体ごとに熱量をこれだけ上げる(本番より速く)
 let tut = null;   // チュートリアルの進行状況(本編中は null)
 
 function tutCrowd() {
@@ -877,7 +993,7 @@ function tutCrowd() {
 
 function tutGo(step) {
   if (step >= TUTORIAL.length) return finishTutorial(false);
-  Object.assign(tut, { step, wait: 0, chosen: false, bombUsed: false, queue: [], qt: 0, doneTimer: 0 });
+  Object.assign(tut, { step, wait: 0, chosen: false, bombUsed: false, queue: [], qt: 0, doneTimer: 0, heatOn: false, heatShown: 0 });
   TUTORIAL[step].start();
   sound.play(700, 0.1, "sine", 0.04, 200);
 }
@@ -909,7 +1025,7 @@ function drawTutorial() {
   ctx.fillText("Esc: スキップして本番へ", x + w - 14, y + 22);
   ctx.textAlign = "center"; ctx.font = "bold 16px sans-serif";
   ctx.fillStyle = st.done() ? "#69f0ae" : "#fff";
-  wrapText(st.done() ? "OK!" : st.text, W / 2, y + 52, w - 30, 20);
+  wrapText(st.done() ? "OK!" : (typeof st.text === "function" ? st.text() : st.text), W / 2, y + 48, w - 30, 20);
   ctx.textAlign = "left";
 }
 
@@ -920,12 +1036,21 @@ function draw() {
   ctx.save();
   if (shake > 0) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
 
-  const grd = ctx.createLinearGradient(0, 0, 0, GY);
-  grd.addColorStop(0, "#0f1424"); grd.addColorStop(1, "#1c2340");
-  ctx.fillStyle = grd; ctx.fillRect(-20, -20, W + 40, GY + 20);
-  if (BG.middle.ok) ctx.drawImage(BG.middle.baked, 0, 0);   // 背景の中層(本棚やおもちゃ)
-  ctx.fillStyle = "#2a2f45"; ctx.fillRect(-20, GY, W + 40, H - GY + 20);
-  ctx.fillStyle = "#3a4060"; ctx.fillRect(-20, GY, W + 40, 3);
+  if (ROOM.ready) {   // 子ども部屋のジオラマ
+    ctx.fillStyle = "#000"; ctx.fillRect(-20, -20, W + 40, H + 40);
+    drawRoom();
+    const fg = ctx.createLinearGradient(0, GY, 0, H);   // 自機のまわり(地面より下)を少し暗くして見やすく
+    fg.addColorStop(0, "rgba(0,0,0,0.15)"); fg.addColorStop(1, "rgba(0,0,0,0.4)");
+    ctx.fillStyle = fg; ctx.fillRect(-20, GY, W + 40, H - GY + 20);
+    ctx.fillStyle = "rgba(255,255,255,0.10)"; ctx.fillRect(-20, GY, W + 40, 2);
+  } else {           // 前の背景(画像が読み込めないとき・BG_ROOM.enable が false のとき)
+    const grd = ctx.createLinearGradient(0, 0, 0, GY);
+    grd.addColorStop(0, "#0f1424"); grd.addColorStop(1, "#1c2340");
+    ctx.fillStyle = grd; ctx.fillRect(-20, -20, W + 40, GY + 20);
+    if (BG.middle.ok) ctx.drawImage(BG.middle.baked, 0, 0);   // 背景の中層(本棚やおもちゃ)
+    ctx.fillStyle = "#2a2f45"; ctx.fillRect(-20, GY, W + 40, H - GY + 20);
+    ctx.fillStyle = "#3a4060"; ctx.fillRect(-20, GY, W + 40, 3);
+  }
   ctx.fillStyle = "rgba(255,255,255,0.06)"; ctx.font = "bold 64px sans-serif"; ctx.textAlign = "center";
   ctx.fillText("◀", 50, GY - 40); ctx.fillText("▶", W - 50, GY - 40); ctx.fillText("▼", W / 2, 70);
 
@@ -969,12 +1094,18 @@ function drawWorld() {
   for (const it of items) {
     const I = ITEMS[it.type];
     if (!it.tut && it.t > 5 && Math.floor(it.t * 8) % 2) continue;
+    if (it.lock > 0) {   // まだ取れないあいだは薄く表示し、残り時間を輪で示す
+      ctx.globalAlpha = 0.55;
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(it.x, it.y, 21, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (it.lock / TUT_ITEM_LOCK)); ctx.stroke();
+    }
     ctx.beginPath(); ctx.arc(it.x, it.y, 15, 0, Math.PI * 2);
     ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fill();
     ctx.lineWidth = 3; ctx.strokeStyle = I.color; ctx.stroke();
     ctx.fillStyle = I.color; ctx.font = "bold 16px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText(I.label, it.x, it.y + 1); ctx.textBaseline = "alphabetic";
     if (it.caption) { ctx.font = "bold 13px sans-serif"; ctx.fillText(it.caption, it.x, it.y + 34); }   // チュートリアル用の説明
+    ctx.globalAlpha = 1;
   }
   for (const c of corpses) drawCorpse(c);
   for (const e of enemies) drawEnemy(e);
@@ -1288,7 +1419,7 @@ function drawHUD() {
   if (S.shield > 0) { ctx.fillStyle = "#4dd0e1"; ctx.fillText(`シールド ${S.shield.toFixed(1)}s`, W - 16, 70); }
   ctx.textAlign = "left"; ctx.fillStyle = "#78909c"; ctx.font = "12px sans-serif";
   ctx.fillText(`[T] エイム: ${autoAim ? "オート" : "マウス"}   [P] ポーズ   [M] 音 ${sound.muted ? "OFF" : "ON"}   [G] 紙風 ${PAPER.enabled ? "ON" : "OFF"}   [D] 数値表示`, 16, H - 16);
-  if (!tut) drawScoreHeat();
+  if (!tut || tut.heatOn) drawScoreHeat();
   if (tut) drawTutorial();
   drawBanner();
   if (debug) drawDebug();
@@ -1405,6 +1536,10 @@ function drawCenter(title, sub) {
 // 画面上部の中央: スコアと熱量
 function drawScoreHeat() {
   const cx = W / 2, k = (S.heat - HEAT.min) / (HEAT.max - HEAT.min);
+  if (tut && tut.heatOn) {   // チュートリアル: ゲージを点滅する枠で囲んで、どこを見ればいいか示す
+    ctx.strokeStyle = `rgba(240,228,66,${0.5 + 0.5 * Math.sin(performance.now() / 150)})`; ctx.lineWidth = 3;
+    ctx.strokeRect(cx - 104, 6, 290, 52);
+  }
   ctx.textAlign = "center"; ctx.font = "bold 22px sans-serif"; ctx.fillStyle = "#ffffff";
   ctx.fillText(S.score.toLocaleString(), cx, 30);
   const bw = 180, bx = cx - bw / 2, by = 40;

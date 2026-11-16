@@ -12,7 +12,7 @@
 
 // ---- 出現ペース ----
 const SPAWN = {
-  startInterval: 2.5,   // 開始時の出現間隔(秒)。大きいほどゆっくり
+  startInterval: 2.2,   // 開始時の出現間隔(秒)。大きいほどゆっくり
   minInterval: 0.5,     // 最短の出現間隔(秒)。これ以上は速くならない
   rampPerSec: 0.004,    // 1秒ごとに間隔が縮む量。小さいほど激しくなるのが遅い
   batchEvery: 120,      // この秒数ごとに、1回に出る敵の数が +1
@@ -201,15 +201,15 @@ const TURRET_ART = {
 // 画像を登録した敵だけが絵になる。登録していない敵はこれまでの図形のまま
 // height: 画面上の高さ(幅は画像の縦横比から自動) / hitR: 当たり判定の半径
 const ENEMY_ART = {
-  grunt:   { src: "assets/enemy_grunt.png",   height: 44,  hitR: 16 },   // 歩兵: ゼンマイ歩行ロボ
-  runner:  { src: "assets/enemy_runner.png",  height: 40,  hitR: 14 },   // 突撃兵: 一輪車ロボ
-  brute:   { src: "assets/enemy_brute.png",   height: 60,  hitR: 26 },   // 重装兵: 重装ブリキロボ
-  bat:     { src: "assets/enemy_bat.png",     height: 32,  hitR: 15 },   // 左右から飛ぶ: プロペラドローン
-  diver:   { src: "assets/enemy_diver.png",   height: 42,  hitR: 15 },   // 上から降る: パラシュートロボ
-  spitter: { src: "assets/enemy_spitter.png", height: 52,  hitR: 18 },   // 浮いて撃つ: 小型飛行船
-  boss:    { src: "assets/enemy_boss.png",    height: 110, hitR: 45 },   // 巨兵: 巨大ブリキロボ
-  titan:   { src: "assets/enemy_titan.png",   height: 150, hitR: 65 },   // 大巨兵: 要塞ロボ
-  dummy:   { src: "assets/enemy_dummy.png",   height: 40,  hitR: 18 },   // チュートリアルの的: 射的の的
+  grunt:   { src: "assets/enemy_grunt.png",   height: 62,  hitR: 22 },   // 歩兵: ゼンマイ歩行ロボ 44 16
+  runner:  { src: "assets/enemy_runner.png",  height: 56,  hitR: 20 },   // 突撃兵: 一輪車ロボ
+  brute:   { src: "assets/enemy_brute.png",   height: 84,  hitR: 36 },   // 重装兵: 重装ブリキロボ
+  bat:     { src: "assets/enemy_bat.png",     height: 36,  hitR: 17 },   // 左右から飛ぶ: プロペラドローン
+  diver:   { src: "assets/enemy_diver.png",   height: 70,  hitR: 25 },   // 上から降る: パラシュートロボ
+  spitter: { src: "assets/enemy_spitter.png", height: 72,  hitR: 25 },   // 浮いて撃つ: 小型飛行船
+  boss:    { src: "assets/enemy_boss.png",    height: 154, hitR: 63 },   // 巨兵: 巨大ブリキロボ
+  titan:   { src: "assets/enemy_titan.png",   height: 210, hitR: 91 },   // 大巨兵: 要塞ロボ
+  dummy:   { src: "assets/enemy_dummy.png",   height: 56,  hitR: 25 },   // チュートリアルの的: 射的の的
 };
 const ENEMY_TINT = 0.45;   // 上位種の色を絵に重ねる濃さ(0〜1)
 
@@ -226,21 +226,59 @@ const BG_ART = {
   },
 };
 
+// ---- 背景: 子ども部屋のジオラマ(案A+C) ----
+// 壁・床・小物を読み込み時に1枚へ焼き付ける(遊んでいる最中は貼るだけなので軽い)
+// 段階が上がるごとに、窓の外の空と部屋の明るさが 昼 → 夕方 → 夕暮れ → 夜 と変わる
+const BG_ROOM = {
+  enable: true,             // false にすると前の1枚絵(BG_ART.middle)に戻る
+  blur: 1.2,                // 背景全体のぼかし(px)。敵を目立たせるため
+  saturate: 0.85,           // 背景全体の彩度
+  wall:  { src: "assets/bg_wall.png", height: 320 },   // 壁と窓。左右反転してつなぎ、窓を左右2つにする
+  floor: { src: "assets/bg_floor.png",
+           top: 316,        // 床の奥(壁との境目)の高さ
+           plank: 0.42,     // 板の大きさ(奥での倍率)
+           vanishY: -420,   // 消失点の高さ。小さい(上)ほど遠近感が弱くなる
+           wallShadow: 0.45 },  // 壁ぎわの床の影の濃さ
+  // 小物。x: 中心の横位置 / y: 床に接する高さ(大きいほど手前) / h: 画面上の高さ / flip: 左右反転
+  props: [
+    { src: "assets/bg_tower.png",     x: 120, y: 340, h: 150 },
+    { src: "assets/bg_bookshelf.png", x: 330, y: 334, h: 205 },
+    { src: "assets/bg_toybox.png",    x: 612, y: 338, h: 84 },
+    { src: "assets/bg_globe.png",     x: 600, y: 268, h: 80, noShadow: true },   // おもちゃ箱の上に乗せる
+    { src: "assets/bg_rabbit.png",    x: 850, y: 342, h: 100 },
+    { src: "assets/bg_bear.png",      x: 455, y: 350, h: 84 },
+    { src: "assets/bg_blocks.png",    x: 215, y: 388, h: 66 },
+    { src: "assets/bg_ball.png",      x: 735, y: 392, h: 46 },
+    { src: "assets/bg_train.png",     x: 540, y: 402, h: 46, flip: true },
+  ],
+  // 手前の積み木(画像の左半分を左下、右半分を右下に置く)。敵より奥に描くので遊びの邪魔はしない
+  front: { enable: false,    // false にすると手前の積み木を表示しない
+           src: "assets/bg_front.png", h: 300, sinkY: 55, blur: 3, alpha: 0.85 },
+  // 段階ごとの空と明るさ(第1段階〜第4段階)。sky: 窓の外の空(上, 下) / bright: 部屋の明るさ / tint: 部屋にかける色
+  tiers: [
+    { sky: ["#5fb4ee", "#cdeeff"], bright: 0.55, tint: "rgba(255,240,210,0.00)", stars: false },   // 昼
+    { sky: ["#f08a4b", "#ffd28a"], bright: 0.50, tint: "rgba(255,140,60,0.12)",  stars: false },   // 夕方
+    { sky: ["#3b2a6b", "#c0607a"], bright: 0.42, tint: "rgba(120,60,160,0.16)",  stars: true  },   // 夕暮れ
+    { sky: ["#0a0f2a", "#1d2a5a"], bright: 0.34, tint: "rgba(40,60,140,0.22)",   stars: true  },   // 夜
+  ],
+  fadeSec: 3,               // 段階が変わったときに切り替わる秒数
+};
+
 // ---- 熱量(うまく戦うほど敵が増え、スコアの倍率も上がる) ----
 // 今の難しさが下限(×1.0)。敵を素早く倒すと上がり、被弾したり囲まれたりすると下がる
 const HEAT = {
   min: 1.0, max: 6.0,       // 熱量の範囲
-  gainPerKill: 0.005,       // 敵を1体倒すごとに上がる量
+  gainPerKill: 0.01,       // 敵を1体倒すごとに上がる量
   fastKillTime: 5,          // 出現からこの秒数以内に倒すと「素早い撃破」
-  fastBonus: 2.5,           // 素早い撃破では上がる量がこの倍
-  decayPerSec: 0.015,       // 何もしなくても少しずつ下がる量(1秒あたり)
-  hurtDrop: 0.3,            // 被弾したときに下がる量
+  fastBonus: 1.8,           // 素早い撃破では上がる量がこの倍
+  decayPerSec: 0.005,       // 何もしなくても少しずつ下がる量(1秒あたり)
+  hurtDrop: 0.5,            // 被弾したときに下がる量
   crowdRadius: 170,         // 自機からこの距離以内に…
   crowdCount: 8,            // …この数以上の敵がいると「囲まれている」
   crowdDropPerSec: 0.1,     // 囲まれているあいだ下がる量(1秒あたり)
   spawnBoost: 0.8,          // 熱量が1上がるごとに、敵の出現がこれだけ速くなる(×6.0で出現の速さ5倍)
-  hpBoost: 1.0,             // 熱量が1上がるごとに、新しく出る敵のHPがこれだけ増える(×6.0でHP6倍)
-  bombDrop: 1.0,            // ボムを使うと下がる量(ボムで倒した敵では熱量は上がらない)
+  hpBoost: 0.5,             // 熱量が1上がるごとに、新しく出る敵のHPがこれだけ増える(×6.0でHP6倍)
+  bombDrop: 0.8,            // ボムを使うと下がる量(ボムで倒した敵では熱量は上がらない)
 };
 
 // ---- スコア ----
