@@ -522,11 +522,13 @@ function update(dt) {
   // --- 最終ボス ---
   if (!S.finalSpawned && S.time >= FINAL.bossAt) {
     S.finalSpawned = true; spawnEnemy("titan", null, TIERS.length - 1); banner("最終決戦 ― 大巨兵 襲来!", "#ff1744"); shake = 10;
+    if (FINAL.roar) titanRoar();
   }
 
   // --- 敵の出現 ---
-  if (!tut) spawnTimer -= dt;
-  if (spawnTimer <= 0) {
+  S.calm = Math.max(0, (S.calm || 0) - dt);
+  if (!tut && S.calm <= 0) spawnTimer -= dt;   // 大巨兵の咆哮のあとは、しばらく敵が出てこない
+  if (spawnTimer <= 0 && S.calm <= 0) {
     const interval = spawnInterval();
     spawnTimer = interval * (0.7 + Math.random() * 0.6);
     const n = 1 + Math.floor(S.time / SPAWN.batchEvery);
@@ -847,6 +849,22 @@ function heatSpawnMul() { return 1 + (S.heat - HEAT.min) * HEAT.spawnBoost; }
 function spawnInterval() { return Math.max(SPAWN.minInterval, SPAWN.startInterval - S.time * SPAWN.rampPerSec) / heatSpawnMul(); }
 function spawnPerSec() { return (1 + Math.floor(S.time / SPAWN.batchEvery)) / spawnInterval(); }   // 今の出現ペース(体/秒の目安)
 function heatPerKill() { return HEAT.gainPerSec / spawnPerSec(); }   // 敵が多いほど1体あたりは少なく(終盤でも上がる速さを一定に)
+
+// 大巨兵の咆哮: 地上の敵を吹き飛ばして全身を見せる(プレイヤーが倒したわけではないので、点数・経験値・熱量は入らない)
+function titanRoar() {
+  for (const e of enemies) {
+    if (e.hp <= 0 || e.d.boss || e.d.kind !== "ground") continue;
+    e.hp = 0; e.flash = 0; burst(e.x, e.y, e.color, 10);
+    if (PAPER.enabled && corpses.length < PERF.maxCorpses) corpses.push({ e, t: 0, dir: e.x < P.x ? -1 : 1 });
+  }
+  S.calm = FINAL.calmSec;
+  fx.push({ type: "flash", life: 0.2, max: 0.2 });
+  sfx.bomb(); shake = 16;
+}
+// 大巨兵の絵に重なっているか(重なった敵は半透明で描く)
+function overTitan(e, t) {
+  return Math.abs(e.x - t.x) < t.artW * 0.45 + e.r && Math.abs(e.y - t.y) < t.artH * 0.5 + e.r;
+}
 
 function damageEnemy(e, dmg) {
   if (e.hp <= 0) return;
@@ -1193,7 +1211,13 @@ function drawWorld() {
     ctx.globalAlpha = 1;
   }
   for (const c of corpses) drawCorpse(c);
-  for (const e of enemies) drawEnemy(e);
+  const titan = FINAL.overlapAlpha < 1 && enemies.find(e => e.type === "titan" && e.hp > 0 && e.art);
+  for (const e of enemies) {
+    const see = titan && e !== titan && overTitan(e, titan);   // 大巨兵に重なった敵は透かして、大巨兵の姿を見せる
+    if (see) ctx.globalAlpha = FINAL.overlapAlpha;
+    drawEnemy(e);
+    if (see) ctx.globalAlpha = 1;
+  }
   for (const eb of ebullets) drawEnemyBullet(eb);
   // 砲台(画像があれば画像、無ければ図形)
   if (lv("ground")) for (const side of [-1, 1]) {
