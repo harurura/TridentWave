@@ -261,13 +261,14 @@ cv.addEventListener("mousemove", e => {
 cv.addEventListener("contextmenu", e => e.preventDefault());
 cv.addEventListener("mousedown", e => {
   lastInput = performance.now();
-  sound.init();
+  sound.init(); bgm.unlock();
   if (e.button === 2) { if (state === "play") useBomb(); return; }
   onClick();
 });
 window.addEventListener("keydown", e => {
   const k = e.key.toLowerCase();
   lastInput = performance.now();
+  bgm.unlock();
   if (state === "levelup" && ["1", "2", "3"].includes(k)) chooseUpgrade(+k - 1);
   if (k === "escape" && state === "play" && tut) { finishTutorial(true); return; }        // チュートリアルをスキップ
   if (k === "escape" && (state === "over" || state === "clear")) { state = "title"; return; }  // 次の人へ交代
@@ -296,6 +297,44 @@ const sound = {
     o.connect(g).connect(this.ac.destination); o.start(t); o.stop(t + dur);
   },
 };
+// ---- BGM: 状態に合わせて曲を選び、音量をゆっくり変えて切り替える ----
+const bgm = {
+  tracks: {}, cur: null, unlocked: false,
+  init() {
+    if (!BGM.enable) return;
+    for (const k of ["main", "boss"]) {
+      const a = new Audio(BGM[k]); a.loop = true; a.preload = "auto"; a.volume = 0;
+      a.onerror = () => console.warn("BGMを読み込めませんでした:", BGM[k]);
+      this.tracks[k] = a;
+    }
+  },
+  unlock() {   // ブラウザは操作の中でしか音を出し始められないので、最初の操作で一度鳴らして止めておく
+    if (this.unlocked || !BGM.enable) return;
+    this.unlocked = true;
+    for (const a of Object.values(this.tracks)) a.play().then(() => { if (a !== this.tracks[this.cur]) a.pause(); }).catch(() => { this.unlocked = false; });
+  },
+  want() {   // 今鳴らすべき曲
+    if (state === "title" || state === "over" || state === "clear" || !S) return null;
+    return S.finalSpawned ? "boss" : "main";
+  },
+  update(dt) {
+    if (!BGM.enable || !this.unlocked) return;
+    const w = this.want();
+    if (w !== this.cur) {   // 新しい曲は最初から
+      if (w) { const a = this.tracks[w]; a.currentTime = 0; a.volume = 0; a.play().catch(() => {}); }
+      this.cur = w;
+    }
+    const base = sound.muted ? 0 : BGM.volume * (state === "pause" || state === "levelup" ? BGM.pauseVolume : 1);
+    const step = dt * BGM.volume / BGM.fadeSec;
+    for (const [k, a] of Object.entries(this.tracks)) {
+      const target = k === this.cur ? base : 0;
+      a.volume = Math.max(0, Math.min(1, a.volume + Math.max(-step, Math.min(step, target - a.volume))));
+      if (k !== this.cur && a.volume === 0 && !a.paused) a.pause();
+    }
+  },
+};
+bgm.init();
+
 // 同じ効果音を短い間隔で何度も鳴らすと重くなるので、間を空ける
 const lastSound = {};
 function throttled(name, f) { return () => { const now = performance.now(); if (now - (lastSound[name] || 0) < PERF.soundGapMs) return; lastSound[name] = now; f(); }; }
@@ -1649,6 +1688,7 @@ function loop(now) {
   if ((state === "over" || state === "clear") && prevState !== state) lastInput = now;   // 終了画面に入った時点から数える
   if ((state === "over" || state === "clear") && now - lastInput > EVENT.idleToTitle * 1000) state = "title";
   prevState = state;
+  bgm.update(dt);
   draw();
   requestAnimationFrame(loop);
 }
