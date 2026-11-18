@@ -530,8 +530,13 @@ function update(dt) {
     m.armed -= dt;
     if (m.armed > 0) continue;
     for (const e of enemies) {
-      if (e.hp > 0 && e.d.kind === "ground" && Math.abs(e.x - m.x) < e.r + 8) {
-        m.dead = true; explode(m.x, GY - 12, m.radius, m.dmg, null, "#ffab40"); sfx.boom(); break;
+      if (e.hp <= 0) continue;
+      const onGround = e.d.kind === "ground" && Math.abs(e.x - m.x) < e.r + 8;
+      const above = m.leap && e.y > GY - EVOLVE.leapMine.airReach && Math.abs(e.x - m.x) < e.r + 24;   // 跳躍地雷は真上の敵にも反応
+      if (onGround || above) {
+        m.dead = true; explode(m.x, GY - 12, m.radius, m.dmg, null, "#ffab40");
+        if (m.leap) explode(m.x, GY - EVOLVE.leapMine.airHeight, m.radius, m.dmg, null, "#ffd180");   // 跳び上がって空中でもう一度
+        sfx.boom(); break;
       }
     }
   }
@@ -622,10 +627,11 @@ function updateWeapons(dt) {
         fired = true;
       }
     } else if (id === "mine") {
-      if (mines.length < Wp.max(L)) {
+      const leap = S.evolved.mine, E = EVOLVE.leapMine;
+      if (mines.length < Wp.max(L) + (leap ? E.extraMax : 0)) {
         const side = Math.random() < 0.5 ? -1 : 1;
         const x = Math.max(20, Math.min(W - 20, P.x + side * (90 + Math.random() * 330)));
-        mines.push({ x, armed: 0.4, dmg: Wp.dmg(L) * S.dmgMul, radius: Wp.radius(L) });
+        mines.push({ x, armed: 0.4, dmg: Wp.dmg(L) * S.dmgMul, radius: Wp.radius(L) * (leap ? E.radiusMul : 1), leap: !!leap });
         fired = true;
       }
     } else if (id === "missile") {
@@ -639,29 +645,40 @@ function updateWeapons(dt) {
         fired = true;
       }
     } else if (id === "thunder") {
-      let cur = nearestEnemy(P, null, 400);
-      if (cur) {
-        const pts = [{ x: AIM.x, y: AIM.y }], hit = new Set();
+      // 雷嵐(進化): 別々の敵を最初の目標にして、雷を複数本落とす
+      const E = EVOLVE.storm, storm = S.evolved.thunder;
+      const hit = new Set();
+      for (let b = 0; b < (storm ? E.bolts : 1); b++) {
+        let cur = nearestEnemy(P, e => !hit.has(e), storm ? E.reach : 400);
+        if (!cur) break;
+        const pts = [{ x: AIM.x, y: AIM.y }];
         for (let i = 0; i < Wp.chain(L) && cur; i++) {
           hit.add(cur); pts.push({ x: cur.x, y: cur.y });
           damageEnemy(cur, Wp.dmg(L) * S.dmgMul);
           const from = cur;
-          cur = nearestEnemy(from, e => !hit.has(e), 170);
+          cur = nearestEnemy(from, e => !hit.has(e), storm ? E.jump : 170);
         }
-        fx.push({ type: "bolt", pts, life: 0.15 });
-        sfx.zap(); fired = true;
+        fx.push({ type: "bolt", pts, life: 0.15, color: storm ? "#b388ff" : null });
+        fired = true;
       }
+      if (fired) sfx.zap();
     } else if (id === "nova") {
-      const R = Wp.radius(L);
-      if (nearestEnemy(P, null, R)) {
-        for (const e of enemies) if (e.hp > 0 && dist(e, P) < R + e.r) { damageEnemy(e, Wp.dmg(L) * S.dmgMul); knockback(e, P.x, P.y, Wp.knock(L)); }
-        for (const eb of ebullets) if (dist(eb, P) < R) eb.life = 0;
-        fx.push({ type: "ring", r: R, life: 0.35, max: 0.35 });
-        sfx.nova(); shake = Math.max(shake, 3); fired = true;
-      }
+      if (nearestEnemy(P, null, novaRadius())) { novaBlast(1, 1); fired = true; }
     }
     S.wcool[id] = fired ? Wp.interval(L) * (id === "ground" && S.evolved.ground ? EVOLVE.heavy.intervalMul : 1) : 0.15;
   }
+}
+
+function slowRadius() { const L = lv("slow"); return L ? WEAPON.slow.radius(L) * (S.evolved.slow ? EVOLVE.gravity.radiusMul : 1) : 0; }
+
+// 衝撃波: 周りの敵にダメージを与えて吹き飛ばし、敵弾を消す(反撃衝撃波では範囲が広く、被弾時にも強いものが出る)
+function novaRadius() { return WEAPON.nova.radius(lv("nova")) * (S.evolved.nova ? EVOLVE.counter.radiusMul : 1); }
+function novaBlast(dmgMul, knockMul) {
+  const L = lv("nova"), Wp = WEAPON.nova, R = novaRadius();
+  for (const e of enemies) if (e.hp > 0 && dist(e, P) < R + e.r) { damageEnemy(e, Wp.dmg(L) * S.dmgMul * dmgMul); knockback(e, P.x, P.y, Wp.knock(L) * knockMul); }
+  for (const eb of ebullets) if (dist(eb, P) < R) eb.life = 0;
+  fx.push({ type: "ring", r: R, life: 0.35, max: 0.35, color: dmgMul > 1 ? "255,215,64" : null });
+  sfx.nova(); shake = Math.max(shake, dmgMul > 1 ? 6 : 3);
 }
 
 function clusterBurst(b) {
@@ -739,12 +756,16 @@ function updateBullets(dt) {
 
 // ---- 敵 ----
 function updateEnemies(dt) {
-  const slowL = lv("slow");
-  const slowR = slowL ? WEAPON.slow.radius(slowL) : 0, slowF = slowL ? WEAPON.slow.factor(slowL) : 0;
+  const slowL = lv("slow"), G = EVOLVE.gravity, grav = slowL && S.evolved.slow;
+  const slowR = slowRadius(), slowF = grav ? G.slow : slowL ? WEAPON.slow.factor(slowL) : 0;
+  let gravHit = false;   // 重力場: 一定間隔で、中の敵にまとめてダメージ
+  if (grav && (S.gravCool = (S.gravCool ?? G.tick) - dt) <= 0) { S.gravCool += G.tick; gravHit = true; }
   for (const e of enemies) {
     if (e.hp <= 0) continue;
     e.t += dt; e.age += dt; e.flash = Math.max(0, e.flash - dt);
-    e.spdMul = slowL && dist(e, P) < slowR + e.r ? 1 - slowF : 1;
+    const inField = slowL && dist(e, P) < slowR + e.r;
+    e.spdMul = inField ? 1 - slowF : 1;
+    if (inField && gravHit) { damageEnemy(e, G.dps * G.tick * S.dmgMul); if (e.hp <= 0) continue; }
     const sp = e.speed * e.spdMul;
     const k = e.d.kind;
     if (k === "ground") {
@@ -845,6 +866,7 @@ function hurtPlayer(raw) {
   // 無敵時間を付け、周りの敵を押し返す(ダメージなし)
   S.invuln = HURT.invuln;
   if (!tut) S.heat = Math.max(HEAT.min, S.heat - HEAT.hurtDrop);   // 被弾で熱量が下がる
+  if (S.evolved.nova) novaBlast(EVOLVE.counter.counterDmgMul, EVOLVE.counter.counterKnockMul);   // 反撃衝撃波
   for (const e of enemies) if (e.hp > 0 && dist(e, P) < HURT.pushRadius + e.r) knockback(e, P.x, P.y, HURT.push);
   fx.push({ type: "ring", r: HURT.pushRadius, life: 0.3, max: 0.3, color: "255,138,128" });
   return "hit";
@@ -1100,15 +1122,18 @@ function buildText() {
 function drawWorld() {
   // 減速フィールド
   if (lv("slow")) {
-    const R = WEAPON.slow.radius(lv("slow"));
+    const R = slowRadius(), grav = S.evolved.slow;
+    const c = grav ? "179,136,255" : "100,181,246";   // 重力場は紫
     ctx.beginPath(); ctx.arc(P.x, P.y, R, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(100,181,246,0.07)"; ctx.fill();
-    ctx.strokeStyle = "rgba(100,181,246,0.35)"; ctx.lineWidth = 1.5; ctx.setLineDash([6, 6]); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = `rgba(${c},${grav ? 0.10 + 0.04 * Math.sin(S.time * 4) : 0.07})`; ctx.fill();
+    ctx.strokeStyle = `rgba(${c},${grav ? 0.55 : 0.35})`; ctx.lineWidth = grav ? 2.5 : 1.5;
+    ctx.setLineDash([6, 6]); ctx.lineDashOffset = grav ? -S.time * 30 : 0; ctx.stroke(); ctx.setLineDash([]); ctx.lineDashOffset = 0;
   }
   // 地雷
   for (const m of mines) {
-    ctx.fillStyle = m.armed > 0 ? "#795548" : "#ffab40";
+    ctx.fillStyle = m.armed > 0 ? "#795548" : m.leap ? "#ffd740" : "#ffab40";
     ctx.fillRect(m.x - 9, GY - 5, 18, 5);
+    if (m.leap) { ctx.fillStyle = "#ffd740"; ctx.fillRect(m.x - 5, GY - 9, 10, 4); }   // 跳躍地雷はバネ付き
     if (m.armed <= 0 && Math.floor(S.time * 4) % 2) { ctx.fillStyle = "#ff5252"; ctx.fillRect(m.x - 2, GY - 8, 4, 3); }
   }
   for (const g of gems) { ctx.fillStyle = "#69f0ae"; diamond(g.x, g.y, 5); }
@@ -1159,7 +1184,7 @@ function drawWorld() {
   // エフェクト
   for (const f of fx) {
     if (f.type === "bolt") {
-      ctx.strokeStyle = "#fff59d"; ctx.lineWidth = 3; ctx.globalAlpha = f.life / 0.15;
+      ctx.strokeStyle = f.color || "#fff59d"; ctx.lineWidth = 3; ctx.globalAlpha = f.life / 0.15;
       ctx.beginPath(); ctx.moveTo(f.pts[0].x, f.pts[0].y);
       for (let i = 1; i < f.pts.length; i++) {
         const a = f.pts[i - 1], b = f.pts[i];

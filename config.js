@@ -104,11 +104,19 @@ const EVOLVE = {
   cluster:   { bomblets: 6, bombletDmg: 0.5, bombletRadius: 38 },   // クラスターミサイル: 子爆弾の数・威力(ミサイル比)・爆発範囲
   aaBattery: { barrels: 3, pops: 3, radiusMul: 1.2 },               // 高射砲陣地: 砲身の数・1発が爆発する回数・炸裂範囲の倍率
   heavy:     { dmgMul: 2.5, blastRadius: 55, knockMul: 1.5, intervalMul: 1.2 },  // 重砲台: 威力倍率・着弾爆発の範囲・押し戻し倍率・発射間隔倍率
+  leapMine:  { extraMax: 2, radiusMul: 1.3, airHeight: 150, airReach: 260 },   // 跳躍地雷: 設置数の追加・爆発範囲の倍率・跳び上がって爆発する高さ・反応する上空の高さ
+  storm:     { bolts: 3, reach: 520, jump: 220 },                              // 雷嵐: 同時に落とす雷の数・最初に狙える距離・連鎖が飛ぶ距離
+  counter:   { radiusMul: 1.25, counterDmgMul: 2, counterKnockMul: 1.5 },      // 反撃衝撃波: 範囲の倍率・被弾したときに出る衝撃波の威力倍率・押し戻し倍率
+  gravity:   { dps: 5, tick: 0.5, slow: 0.75, radiusMul: 1.15 },              // 重力場: 中の敵への秒間ダメージ(火力強化が掛かる)・ダメージの間隔(秒)・減速率・範囲の倍率
 };
 const EVOLUTIONS = [
   { id: "cluster",   from: "missile", with: "boom",    name: "クラスターミサイル", desc: "着弾すると子爆弾をばらまき、周りを巻き込む" },
   { id: "aaBattery", from: "flak",    with: "pierce",  name: "高射砲陣地",         desc: "砲身が3本に。炸裂弾が敵を貫き、何度も爆発する" },
   { id: "heavy",     from: "ground",  with: "caliber", name: "重砲台",             desc: "一撃が重くなり、着弾点が爆発する" },
+  { id: "leapMine",  from: "mine",    with: "bounce",  name: "跳躍地雷",           desc: "上空の敵にも反応し、跳び上がって地上と空中で2回爆発する" },
+  { id: "storm",     from: "thunder", with: "spread",  name: "雷嵐",               desc: "雷が3本に分かれて別々の敵に落ち、遠くまで連鎖する" },
+  { id: "counter",   from: "nova",    with: "armor",   name: "反撃衝撃波",         desc: "範囲が広がり、被弾した瞬間に強力な衝撃波で反撃する" },
+  { id: "gravity",   from: "slow",    with: "power",   name: "重力場",             desc: "フィールドの中の敵を強く減速させ、押しつぶしてダメージを与える" },
 ];
 
 // ============================================================
