@@ -488,7 +488,7 @@ function update(dt) {
   // --- 敵の出現 ---
   if (!tut) spawnTimer -= dt;
   if (spawnTimer <= 0) {
-    const interval = Math.max(SPAWN.minInterval, SPAWN.startInterval - S.time * SPAWN.rampPerSec) / heatSpawnMul();
+    const interval = spawnInterval();
     spawnTimer = interval * (0.7 + Math.random() * 0.6);
     const n = 1 + Math.floor(S.time / SPAWN.batchEvery);
     for (let i = 0; i < n && enemies.length < PERF.maxEnemies; i++) spawnEnemy(pickEnemyType());
@@ -784,6 +784,9 @@ function updateHeat(dt) {
   S.heat = Math.max(HEAT.min, S.heat - drop * dt);
 }
 function heatSpawnMul() { return 1 + (S.heat - HEAT.min) * HEAT.spawnBoost; }
+function spawnInterval() { return Math.max(SPAWN.minInterval, SPAWN.startInterval - S.time * SPAWN.rampPerSec) / heatSpawnMul(); }
+function spawnPerSec() { return (1 + Math.floor(S.time / SPAWN.batchEvery)) / spawnInterval(); }   // 今の出現ペース(体/秒の目安)
+function heatPerKill() { return HEAT.gainPerSec / spawnPerSec(); }   // 敵が多いほど1体あたりは少なく(終盤でも上がる速さを一定に)
 
 function damageEnemy(e, dmg) {
   if (e.hp <= 0) return;
@@ -795,12 +798,12 @@ function damageEnemy(e, dmg) {
 function killEnemy(e) {
   S.kills++;
   if (!tut || tut.heatOn) {   // スコア(熱量が倍率)と熱量の上昇(チュートリアルでは熱量の手順だけ)
-    let pts = e.d.xp * e.T.xp * SCORE.perXp;
+    let pts = e.d.xp * e.T.score * SCORE.perXp;
     if (e.type === "boss") pts += SCORE.bossBonus; else if (e.type === "titan") pts += SCORE.titanBonus;
     pts = Math.round(pts * S.heat / 10) * 10;
     S.score += pts;
     if (e.d.boss) floatText(e.x, e.y - e.r - 20, `+${pts.toLocaleString()}`, "#f0e442");
-    if (!bombing) S.heat = Math.min(HEAT.max, S.heat + (tut ? TUT_HEAT_GAIN : HEAT.gainPerKill * (e.age <= HEAT.fastKillTime ? HEAT.fastBonus : 1)));   // ボムで倒した分は上げない
+    if (!bombing) S.heat = Math.min(HEAT.max, S.heat + (tut ? TUT_HEAT_GAIN : heatPerKill() * (e.age <= HEAT.fastKillTime ? HEAT.fastBonus : 1)));   // ボムで倒した分は上げない
     S.maxHeat = Math.max(S.maxHeat, S.heat);
   }
   if (e.type === "titan") { S.finalKilled = true; banner("大巨兵 撃破!", "#ffd54f"); }
@@ -1579,14 +1582,15 @@ function drawBanner() {
 
 function drawDebug() {   // [D]キーで表示。数値調整の目安
   const fi = S.fireInt;
-  const interval = Math.max(SPAWN.minInterval, SPAWN.startInterval - S.time * SPAWN.rampPerSec) / heatSpawnMul();
+  const interval = spawnInterval();
   const shares = TIERS.map((T, i) => { let p = tierShare(i); for (let j = i + 1; j < TIERS.length; j++) p *= 1 - tierShare(j); return p; });
   const lines = [
     `主砲の秒間ダメージ目安: ${(S.dmgMul * S.caliberMul * S.multi / fi).toFixed(1)}(全弾命中時)`,
     `1発: ${(S.dmgMul * S.caliberMul).toFixed(2)} / 弾数 ${S.multi} / 貫通 ${S.pierce} / 跳弾 ${S.bounce}`,
     `出現間隔: ${interval.toFixed(2)}秒 × ${1 + Math.floor(S.time / SPAWN.batchEvery)}体 / 画面上の敵 ${enemies.length}体`,
     `次のレベルまで: ${Math.ceil(S.xpNext - S.xp)} / ${S.xpNext}(経験値×${S.xpMul.toFixed(2)})`,
-    `熱量 ×${S.heat.toFixed(2)} → 出現の速さ ×${heatSpawnMul().toFixed(2)}`,
+    `熱量 ×${S.heat.toFixed(2)} → 出現の速さ ×${heatSpawnMul().toFixed(2)} / 1体で +${heatPerKill().toFixed(4)}`,
+    `Lv ${S.level}(ビルド完成の目安は Lv44 ごろ)`,
     ...TIERS.map((T, i) => `${T.name}(HP×${T.hp}): ${Math.round(shares[i] * 100)}%`),
   ];
   ctx.fillStyle = "rgba(0,0,0,0.65)"; ctx.fillRect(W - 330, 80, 320, 14 + lines.length * 17);
