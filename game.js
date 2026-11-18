@@ -131,8 +131,9 @@ function roomImg(src) {
 if (BG_ROOM.enable) {
   roomImg(BG_ROOM.wall.src); roomImg(BG_ROOM.floor.src);
   BG_ROOM.props.forEach(p => roomImg(p.src));
-  if (BG_ROOM.front?.enable) roomImg(BG_ROOM.front.src);
+  if (BG_ROOM.front) roomImg(BG_ROOM.front.src);   // オンオフを途中で切り替えられるよう、無効でも読み込んでおく
 }
+let frontOn = !!BG_ROOM.front?.enable;   // [F]キーで手前の積み木を切り替え
 function newCanvas() { const c = document.createElement("canvas"); c.width = W; c.height = H; return c; }
 
 function bakeRoom() {
@@ -169,15 +170,16 @@ function bakeRoom() {
   const room = newCanvas(), rg = room.getContext("2d"), hasFilter = "filter" in rg;
   if (hasFilter) rg.filter = `blur(${R.blur}px) saturate(${R.saturate})`;
   rg.drawImage(raw, 0, 0);
-  if (R.front?.enable) {   // 手前の積み木: 左下と右下に、強めにぼかして置く
-    const fr = I[R.front.src], s = R.front.h / fr.naturalHeight, hw = fr.naturalWidth / 2, y0 = H - R.front.h + R.front.sinkY;
-    if (hasFilter) rg.filter = `blur(${R.front.blur}px) saturate(${R.saturate})`;
-    rg.globalAlpha = R.front.alpha;
-    rg.drawImage(fr, 0, 0, hw, fr.naturalHeight, 0, y0, hw * s, R.front.h);
-    rg.drawImage(fr, hw, 0, hw, fr.naturalHeight, W - hw * s, y0, hw * s, R.front.h);
-    rg.globalAlpha = 1;
-  }
   if (hasFilter) rg.filter = "none";
+  // 手前の積み木: 部屋とは別の層にして、自機や敵より手前に描く。左下と右下に、強めにぼかして置く
+  let front = null;
+  if (R.front) {
+    front = newCanvas(); const fg = front.getContext("2d");
+    const fr = I[R.front.src], s = R.front.h / fr.naturalHeight, hw = fr.naturalWidth / 2, y0 = H - R.front.h + R.front.sinkY;
+    if (hasFilter) fg.filter = `blur(${R.front.blur}px) saturate(${R.saturate})`;
+    fg.drawImage(fr, 0, 0, hw, fr.naturalHeight, 0, y0, hw * s, R.front.h);
+    fg.drawImage(fr, hw, 0, hw, fr.naturalHeight, W - hw * s, y0, hw * s, R.front.h);
+  }
   // 段階ごとの完成画像: 空 → 部屋(段階の明るさと色をかける)
   ROOM.baked = R.tiers.map((T, i) => {
     const c = newCanvas(), cg = c.getContext("2d");
@@ -194,15 +196,28 @@ function bakeRoom() {
       }
     }
     cg.fillStyle = "rgba(0,0,0,0.25)"; cg.fillRect(0, 0, W, R.wall.height);   // 空も少しだけ暗く
-    const lit = newCanvas(), lg = lit.getContext("2d");
-    lg.drawImage(room, 0, 0);
-    lg.globalCompositeOperation = "source-atop";   // 部屋の絵の上だけを暗くする(窓の外の空はそのまま)
-    lg.fillStyle = `rgba(0,0,0,${1 - T.bright})`; lg.fillRect(0, 0, W, H);
-    lg.fillStyle = T.tint; lg.fillRect(0, 0, W, H);
-    cg.drawImage(lit, 0, 0);
+    cg.drawImage(litLayer(room, T), 0, 0);
     return c;
   });
+  ROOM.frontBaked = front ? R.tiers.map(T => litLayer(front, T)) : [];   // 手前の積み木も段階の明るさに合わせる
   ROOM.ready = true;
+}
+function litLayer(src, T) {   // 絵のある部分だけを、段階の明るさと色にする(窓の外の空や透明な所はそのまま)
+  const lit = newCanvas(), lg = lit.getContext("2d");
+  lg.drawImage(src, 0, 0);
+  lg.globalCompositeOperation = "source-atop";
+  lg.fillStyle = `rgba(0,0,0,${1 - T.bright})`; lg.fillRect(0, 0, W, H);
+  lg.fillStyle = T.tint; lg.fillRect(0, 0, W, H);
+  return lit;
+}
+function drawFront() {   // 手前の積み木(drawRoom と同じように段階の切り替えでゆっくり変える)
+  if (!frontOn || !ROOM.ready || !ROOM.frontBaked.length) return;
+  const a = BG_ROOM.front.alpha, F = ROOM.frontBaked;
+  if (ROOM.fade < 1 && ROOM.prev >= 0) {
+    ctx.globalAlpha = a; ctx.drawImage(F[ROOM.prev], 0, 0);
+    ctx.globalAlpha = a * ROOM.fade; ctx.drawImage(F[ROOM.cur], 0, 0);
+  } else { ctx.globalAlpha = a; ctx.drawImage(F[ROOM.cur], 0, 0); }
+  ctx.globalAlpha = 1;
 }
 
 function drawRoom() {   // 段階が変わったら、前の段階の絵からゆっくり切り替える
@@ -261,6 +276,7 @@ window.addEventListener("keydown", e => {
   if (k === "t") autoAim = !autoAim;
   if (k === "d") debug = !debug;
   if (k === "g") PAPER.enabled = !PAPER.enabled;   // 紙風の表示を切り替え
+  if (k === "f") frontOn = !frontOn;               // 手前の積み木を切り替え
   if ((k === " " || k === "b") && state === "play") { e.preventDefault(); useBomb(); }
   if (k === "enter") { if (state === "title") startGame(true); else if (state === "over" || state === "clear") startGame(false); }
 });
@@ -1056,6 +1072,7 @@ function draw() {
   ctx.fillText("◀", 50, GY - 40); ctx.fillText("▶", W - 50, GY - 40); ctx.fillText("▼", W / 2, 70);
 
   if (state !== "title") drawWorld();
+  drawFront();   // 手前の積み木は自機や敵より手前
   ctx.restore();
 
   if (state === "title") drawTitle();
@@ -1419,7 +1436,7 @@ function drawHUD() {
   ctx.fillStyle = "#cfd8dc"; ctx.fillText(`Lv ${S.level}   撃破 ${S.kills}`, W - 16, 50);
   if (S.shield > 0) { ctx.fillStyle = "#4dd0e1"; ctx.fillText(`シールド ${S.shield.toFixed(1)}s`, W - 16, 70); }
   ctx.textAlign = "left"; ctx.fillStyle = "#78909c"; ctx.font = "12px sans-serif";
-  ctx.fillText(`[T] エイム: ${autoAim ? "オート" : "マウス"}   [P] ポーズ   [M] 音 ${sound.muted ? "OFF" : "ON"}   [G] 紙風 ${PAPER.enabled ? "ON" : "OFF"}   [D] 数値表示`, 16, H - 16);
+  ctx.fillText(`[T] エイム: ${autoAim ? "オート" : "マウス"}   [P] ポーズ   [M] 音 ${sound.muted ? "OFF" : "ON"}   [G] 紙風 ${PAPER.enabled ? "ON" : "OFF"}   [F] 手前 ${frontOn ? "ON" : "OFF"}   [D] 数値表示`, 16, H - 16);
   if (!tut || tut.heatOn) drawScoreHeat();
   if (tut) drawTutorial();
   drawBanner();
