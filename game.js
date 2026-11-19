@@ -156,16 +156,10 @@ function bakeRoom() {
   const sg = g.createLinearGradient(0, F.top, 0, F.top + 50);   // 壁ぎわの影
   sg.addColorStop(0, `rgba(40,20,10,${F.wallShadow})`); sg.addColorStop(1, "rgba(40,20,10,0)");
   g.fillStyle = sg; g.fillRect(0, F.top, W, 50);
+  const base = newCanvas(); base.getContext("2d").drawImage(raw, 0, 0);   // 壁と床だけ(タイトル画面用)
   // 小物: 奥(yが小さい)から順に置く。床に影を落とす
-  [...R.props].sort((a, b) => a.y - b.y).forEach(p => {
-    const im = I[p.src], w = p.h * im.naturalWidth / im.naturalHeight;
-    if (!p.noShadow) {
-      g.fillStyle = "rgba(40,20,10,0.35)";
-      g.beginPath(); g.ellipse(p.x, p.y - 2, w * 0.48, Math.max(4, p.h * 0.06), 0, 0, Math.PI * 2); g.fill();
-    }
-    g.save(); g.translate(p.x, 0); if (p.flip) g.scale(-1, 1);
-    g.drawImage(im, -w / 2, p.y - p.h, w, p.h); g.restore();
-  });
+  const props = [...R.props].sort((a, b) => a.y - b.y);
+  props.forEach(p => drawProp(g, p, 0, 0));
   // ぼかし・彩度は1回だけ(重い処理なので段階ごとには行わない)
   const room = newCanvas(), rg = room.getContext("2d"), hasFilter = "filter" in rg;
   if (hasFilter) rg.filter = `blur(${R.blur}px) saturate(${R.saturate})`;
@@ -183,6 +177,48 @@ function bakeRoom() {
   // 段階ごとの完成画像: 空 → 部屋(段階の明るさと色をかける)
   ROOM.baked = R.tiers.map((T, i) => {
     const c = newCanvas(), cg = c.getContext("2d");
+    drawSky(cg, T, i);
+    cg.drawImage(litLayer(room, T), 0, 0);
+    return c;
+  });
+  ROOM.frontBaked = front ? R.tiers.map(T => litLayer(front, T)) : [];   // 手前の積み木も段階の明るさに合わせる
+  // タイトル画面とスタート演出用: 壁と床だけの絵と、小物を1つずつ切り出した絵(第1段階の明るさ)
+  // 演出のあいだだけ使い、遊んでいる最中は今までどおり1枚に焼き付けた絵を使う
+  const T0 = R.tiers[0];
+  ROOM.introBase = newCanvas();
+  { const cg = ROOM.introBase.getContext("2d"), b = newCanvas(), bg = b.getContext("2d");
+    if (hasFilter) bg.filter = `blur(${R.blur}px) saturate(${R.saturate})`;
+    bg.drawImage(base, 0, 0);
+    drawSky(cg, T0, 0); cg.drawImage(litLayer(b, T0), 0, 0); }
+  ROOM.introProps = props.map(p => propSprite(p, T0, hasFilter));
+  ROOM.ready = true;
+}
+// 小物を1つ描く(床の影つき)。ox, oy は描く先のずらし量
+function drawProp(g, p, ox, oy) {
+  const im = ROOM.imgs[p.src], w = p.h * im.naturalWidth / im.naturalHeight;
+  if (!p.noShadow) {
+    g.fillStyle = "rgba(40,20,10,0.35)";
+    g.beginPath(); g.ellipse(p.x + ox, p.y - 2 + oy, w * 0.48, Math.max(4, p.h * 0.06), 0, 0, Math.PI * 2); g.fill();
+  }
+  g.save(); g.translate(p.x + ox, oy); if (p.flip) g.scale(-1, 1);
+  g.drawImage(im, -w / 2, p.y - p.h, w, p.h); g.restore();
+}
+// 小物を1つ、ぼかしと明るさをかけた小さな絵にする(スタート演出で1つずつ立ち上げる用)
+function propSprite(p, T, hasFilter) {
+  const R = BG_ROOM, im = ROOM.imgs[p.src], w = p.h * im.naturalWidth / im.naturalHeight, pad = 8, sh = Math.max(4, p.h * 0.06);
+  const x0 = Math.floor(p.x - w / 2 - pad), y0 = Math.floor(p.y - p.h - pad);
+  const c = document.createElement("canvas"); c.width = Math.ceil(w + pad * 2); c.height = Math.ceil(p.h + pad * 2 + sh);
+  const g = c.getContext("2d");
+  if (hasFilter) g.filter = `blur(${R.blur}px) saturate(${R.saturate})`;
+  drawProp(g, p, -x0, -y0);
+  g.filter = "none"; g.globalCompositeOperation = "source-atop";
+  g.fillStyle = `rgba(0,0,0,${1 - T.bright})`; g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = T.tint; g.fillRect(0, 0, c.width, c.height);
+  return { c, x: x0, y: y0, footY: p.y };
+}
+function drawSky(cg, T, i) {   // 窓の外の空(段階ごと)
+  const R = BG_ROOM;
+  {
     const sky = cg.createLinearGradient(0, 0, 0, R.wall.height);
     sky.addColorStop(0, T.sky[0]); sky.addColorStop(1, T.sky[1]);
     cg.fillStyle = sky; cg.fillRect(0, 0, W, R.wall.height);
@@ -196,11 +232,7 @@ function bakeRoom() {
       }
     }
     cg.fillStyle = "rgba(0,0,0,0.25)"; cg.fillRect(0, 0, W, R.wall.height);   // 空も少しだけ暗く
-    cg.drawImage(litLayer(room, T), 0, 0);
-    return c;
-  });
-  ROOM.frontBaked = front ? R.tiers.map(T => litLayer(front, T)) : [];   // 手前の積み木も段階の明るさに合わせる
-  ROOM.ready = true;
+  }
 }
 function litLayer(src, T) {   // 絵のある部分だけを、段階の明るさと色にする(窓の外の空や透明な所はそのまま)
   const lit = newCanvas(), lg = lit.getContext("2d");
@@ -210,8 +242,53 @@ function litLayer(src, T) {   // 絵のある部分だけを、段階の明る�
   lg.fillStyle = T.tint; lg.fillRect(0, 0, W, H);
   return lit;
 }
+// ---- スタート演出: 壁と床だけの部屋に、小物 → 自機 → 手前の積み木 の順に奥からパタパタ立ち上がる ----
+let introAt = 0, introPlayed = -1;
+function startIntro() {
+  sound.init();
+  if (!INTRO.enable || !ROOM.ready) { startGame(true); return; }
+  state = "intro"; introAt = performance.now(); introPlayed = -1;
+}
+function endIntro() { if (state === "intro") startGame(true); }
+function introItems() {   // 立ち上がる順番
+  const items = ROOM.introProps.map((p, i) => ({ kind: "prop", p, i }));
+  items.push({ kind: "player" });
+  if (frontOn && ROOM.frontBaked.length) items.push({ kind: "front" });
+  return items;
+}
+function introEnd() { const n = introItems().length; return INTRO.titleFade + (n - 1) * INTRO.step + INTRO.pop + INTRO.hold; }
+function introTime() { return (performance.now() - introAt) / 1000; }
+function backOut(k) { const c1 = 1.9, c3 = c1 + 1; return 1 + c3 * Math.pow(k - 1, 3) + c1 * Math.pow(k - 1, 2); }   // 少し行き過ぎて戻る(パタンと立つ)
+function popAt(pivotY, s, f) {   // 足元(pivotY)を軸に、寝ている状態(s=0)から立たせて描く
+  ctx.save(); ctx.translate(0, pivotY); ctx.scale(1, s); ctx.translate(0, -pivotY); f(); ctx.restore();
+}
+const INTRO_STUB = { invuln: 0, shield: 0, hurtFlash: 0, aimAngle: -Math.PI / 2, cards: {}, time: 0 };   // 演出中の自機を描くための仮の状態
+function drawIntro() {
+  ctx.drawImage(ROOM.introBase, 0, 0);   // 壁と床と窓だけ
+  if (state !== "intro") return;
+  const t = introTime(), items = introItems();
+  const scale = i => { const k = (t - INTRO.titleFade - i * INTRO.step) / INTRO.pop; return k <= 0 ? 0 : k >= 1 ? 1 : Math.max(0, backOut(k)); };
+  items.forEach((it, i) => {   // 立ち上がり始めた瞬間に効果音
+    if (t >= INTRO.titleFade + i * INTRO.step && introPlayed < i) { introPlayed = i; introSound(it, i); }
+  });
+  items.forEach((it, i) => { const s = scale(i); if (it.kind === "prop" && s > 0) popAt(it.p.footY, s, () => ctx.drawImage(it.p.c, it.p.x, it.p.y)); });
+  const done = t - (INTRO.titleFade + (items.length - 1) * INTRO.step + INTRO.pop);
+  if (done > 0) { ctx.globalAlpha = Math.min(1, done / (INTRO.hold * 0.6)); ctx.drawImage(ROOM.baked[0], 0, 0); ctx.globalAlpha = 1; }   // 遊ぶときの絵へなめらかにつなぐ
+  items.forEach((it, i) => {
+    const s = scale(i); if (s <= 0) return;
+    if (it.kind === "player") popAt(GY, s, () => { const keep = S; S = INTRO_STUB; drawPlayer(); S = keep; });
+    if (it.kind === "front") popAt(H, s, () => { ctx.globalAlpha = BG_ROOM.front.alpha; ctx.drawImage(ROOM.frontBaked[0], 0, 0); ctx.globalAlpha = 1; });
+  });
+}
+function introSound(it, i) {
+  if (it.kind === "player") { sound.play(330, 0.1, "square", 0.05, 330); setTimeout(() => sound.play(660, 0.12, "square", 0.04, 200), 90); return; }
+  if (it.kind === "front") { sound.play(90, 0.18, "triangle", 0.08, -30); return; }
+  sound.play(200 + i * 18, 0.05, "square", 0.03, -100);                                  // パタ
+  setTimeout(() => sound.play(120 + i * 8, 0.08, "triangle", 0.06, -50), 60);          // …ン
+}
+
 function drawFront() {   // 手前の積み木(drawRoom と同じように段階の切り替えでゆっくり変える)
-  if (!frontOn || !ROOM.ready || !ROOM.frontBaked.length) return;
+  if (!frontOn || !ROOM.ready || !ROOM.frontBaked.length || state === "title" || state === "intro") return;
   const a = BG_ROOM.front.alpha, F = ROOM.frontBaked;
   if (ROOM.fade < 1 && ROOM.prev >= 0) {
     ctx.globalAlpha = a; ctx.drawImage(F[ROOM.prev], 0, 0);
@@ -270,6 +347,7 @@ window.addEventListener("keydown", e => {
   const k = e.key.toLowerCase();
   lastInput = performance.now();
   bgm.unlock();
+  if (state === "intro") { if (k === "enter" || k === "escape" || k === " ") { e.preventDefault(); endIntro(); } return; }   // 演出を飛ばす
   if (state === "over" || state === "clear") {   // 終了画面
     const R = S.result;
     if (R.naming) {   // 名前の入力中は、ゲームのキー操作を使わない(漢字変換中の Enter は決定にしない)
@@ -292,7 +370,7 @@ window.addEventListener("keydown", e => {
   if (k === "g") PAPER.enabled = !PAPER.enabled;   // 紙風の表示を切り替え
   if (k === "f") frontOn = !frontOn;               // 手前の積み木を切り替え
   if ((k === " " || k === "b") && state === "play") { e.preventDefault(); useBomb(); }
-  if (k === "enter" && state === "title") startGame(true);
+  if (k === "enter" && state === "title") startIntro();
 });
 
 // ============================================================
@@ -353,7 +431,7 @@ const bgm = {
     for (const a of Object.values(this.tracks)) a.play().then(() => { if (a !== this.tracks[this.cur]) a.pause(); }).catch(() => { this.unlocked = false; });
   },
   want() {   // 今鳴らすべき曲
-    if (state === "title" || state === "over" || state === "clear" || !S) return null;
+    if (state === "title" || state === "intro" || state === "over" || state === "clear" || !S) return null;
     if (S.finalSpawned) return S.time >= S.finalAt + BGM.bossDelay ? "boss" : null;   // 咆哮のあと少し間を空けてボス曲
     return S.time >= FINAL.bossAt - BGM.stopBefore ? null : "main";                  // 大巨兵の少し前から静かに
   },
@@ -422,7 +500,8 @@ function startGame(withTutorial) {
 }
 
 function onClick() {
-  if (state === "title") { startGame(true); return; }                            // タイトルから: チュートリアル付き
+  if (state === "title") { startIntro(); return; }                               // タイトルから: スタート演出 → チュートリアル
+  if (state === "intro") { endIntro(); return; }                                 // 演出を飛ばす
   if (state === "over" || state === "clear") {   // 終了画面: ボタンを押す(名前の入力中なら入力欄に戻す)
     const i = endButtonAt(mouse.x, mouse.y);
     if (i >= 0) endAction(i); else if (S.result.naming) nameInput.focus();
@@ -1213,7 +1292,7 @@ function draw() {
 
   if (ROOM.ready) {   // 子ども部屋のジオラマ
     ctx.fillStyle = "#000"; ctx.fillRect(-20, -20, W + 40, H + 40);
-    drawRoom();
+    if (state === "title" || state === "intro") drawIntro(); else drawRoom();   // タイトルは壁と床だけ → スタート演出
     const fg = ctx.createLinearGradient(0, GY, 0, H);   // 自機のまわり(地面より下)を少し暗くして見やすく
     fg.addColorStop(0, "rgba(0,0,0,0.15)"); fg.addColorStop(1, "rgba(0,0,0,0.4)");
     ctx.fillStyle = fg; ctx.fillRect(-20, GY, W + 40, H - GY + 20);
@@ -1229,12 +1308,13 @@ function draw() {
   ctx.fillStyle = "rgba(255,255,255,0.06)"; ctx.font = "bold 64px sans-serif"; ctx.textAlign = "center";
   ctx.fillText("◀", 50, GY - 40); ctx.fillText("▶", W - 50, GY - 40); ctx.fillText("▼", W / 2, 70);
 
-  if (state !== "title") drawWorld();
+  if (state !== "title" && state !== "intro") drawWorld();
   drawFront();   // 手前の積み木は自機や敵より手前
   ctx.restore();
 
   if (state === "title") drawTitle();
-  if (state !== "title" && state !== "over" && state !== "clear") drawHUD();   // 終了画面では結果だけを見せる
+  if (state === "intro") { const a = 1 - introTime() / INTRO.titleFade; if (a > 0) { ctx.globalAlpha = a; drawTitle(); ctx.globalAlpha = 1; } }   // タイトルの文字を消していく
+  if (state !== "title" && state !== "intro" && state !== "over" && state !== "clear") drawHUD();   // 終了画面では結果だけを見せる
   if (state === "levelup") drawLevelUp();
   if (state === "pause") drawCenter("PAUSE", "P / Esc で再開");
   if (state === "over" || state === "clear") drawResult();
@@ -1986,6 +2066,7 @@ function loop(now) {
   const dt = Math.min(0.05, (now - lastTime) / 1000);
   lastTime = now;
   if (state === "play") update(dt);
+  if (state === "intro" && introTime() >= introEnd()) endIntro();   // 演出が終わったらチュートリアルへ
   if ((state === "over" || state === "clear") && prevState !== state) lastInput = now;   // 終了画面に入った時点から数える
   if ((state === "over" || state === "clear") && now - lastInput > EVENT.idleToTitle * 1000) endAction(1);   // 放置されたらタイトルへ
   prevState = state;
