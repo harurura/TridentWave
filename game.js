@@ -249,7 +249,7 @@ function litLayer(src, T) {   // 絵のある部分だけを、段階の明る�
 let introAt = 0, introPlayed = -1;
 function startIntro() {
   sound.init();
-  if (!INTRO.enable || !ROOM.ready) { startGame(true); return; }
+  if (!INTRO.enable || !ROOM.ready || DEBUG_START) { startGame(true); return; }
   state = "intro"; introAt = performance.now(); introPlayed = -1;
 }
 function endIntro() { if (state === "intro") startGame(true); }
@@ -373,6 +373,42 @@ const MODE = (() => { try { const m = new URLSearchParams(location.search).get("
   SPAWN.rampPerSec /= k; SPAWN.batchEvery *= k;
   for (const d of Object.values(ENEMY)) if (d.from < 99999) d.from *= k;
 })();
+// ---- デバッグ開始: URLに ?from=last を付けると、大巨兵の少し前(8:50)からビルド完成済みで始まる ----
+// ?from=7:30 や ?from=450(秒)で好きな時間から。&heat=6 で熱量、&lv=30 でレベルも指定できる(例: index.html?from=last&heat=6)
+// チュートリアルとスタート演出は飛ばし、ランキングには記録しない
+const DEBUG_START = (() => {
+  try {
+    const q = new URLSearchParams(location.search), f = q.get("from"); if (!f) return null;
+    let from = f === "last" ? FINAL.bossAt - 10 : f.includes(":") ? (+f.split(":")[0]) * 60 + (+f.split(":")[1]) : +f;
+    if (!(from >= 0)) return null;
+    from = Math.min(from, FINAL.clearAt - 5);
+    const heat = Math.max(HEAT.min, Math.min(HEAT.max, +(q.get("heat") || HEAT.min)));
+    const lvTo = Math.max(1, +(q.get("lv") || 60));
+    return { from, heat, lv: lvTo };
+  } catch (e) { return null; }
+})();
+function applyDebugStart() {
+  const D = DEBUG_START, muted = sound.muted;
+  sound.muted = true;   // まとめてレベルアップするあいだは音を出さない
+  // レベルアップを繰り返してビルドを作る: 進化 > 持っているカードのレベルアップ > 新しいカード の順に選ぶ
+  while (S.level < D.lv) {
+    S.level++; S.xpNext = Math.floor(LEVEL.base + S.level * LEVEL.perLevel + Math.pow(S.level, LEVEL.pow));
+    openLevelUp();
+    if (state !== "levelup") break;   // 取れるカードが無くなった(ビルド完成)
+    const pick = (f) => choices.findIndex(f);
+    let i = pick(c => c.type === "evolve");
+    if (i < 0) i = pick(c => (c.type === "weapon" || c.type === "passive") && lv(c.id) > 0);
+    const partner = c => EVOLUTIONS.some(v => (v.from === c.id && lv(v.with) > 0) || (v.with === c.id && lv(v.from) > 0));
+    if (i < 0) i = pick(c => (c.type === "weapon" || c.type === "passive") && partner(c));   // 進化の相方を優先して、進化できるビルドにする
+    if (i < 0) i = pick(c => c.type === "weapon" || c.type === "passive");
+    chooseUpgrade(Math.max(0, i));
+  }
+  sound.muted = muted;
+  state = "play"; S.tip = null; S.score = 0; S.xp = 0; S.hp = S.maxHp;
+  S.time = D.from; S.heat = S.maxHeat = D.heat;
+  S.tierShown = currentTier(); for (let t = 0; t <= S.tierShown; t++) S.bossDone[t] = true;   // 途中の段階の巨兵はもう出たことにする
+  banner(`デバッグ: ${fmtTime(D.from)} から(Lv ${S.level})`, "#80d8ff");
+}
 function clearMinutes() { return Math.round(FINAL.clearAt / 60); }
 
 // ============================================================
@@ -547,6 +583,7 @@ function startGame(withTutorial) {
   spawnTimer = 1; shake = 0;
   state = "play";
   tut = null;
+  if (DEBUG_START) { applyDebugStart(); return; }   // デバッグ開始: チュートリアルなしで途中から
   if (withTutorial) { tut = { step: 0 }; tutGo(0); }
 }
 
@@ -1420,7 +1457,7 @@ function finishRun(cleared) {
                   heat: S.maxHeat, lv: S.level, kills: S.kills, bombs: S.bombsUsed, build: buildList(), date: Date.now() };
   const list = loadRanking();
   const rank = list.filter(r => r.score >= entry.score).length;   // 同点は先に登録した人が上
-  const ranked = entry.score > 0 && rank < RANKING.size;
+  const ranked = entry.score > 0 && rank < RANKING.size && !DEBUG_START;   // デバッグ開始のときは記録しない
   S.result = { entry, list, rank: ranked ? rank : -1, naming: ranked, sel: 0, saved: false, tip: resultTip(cleared) };
   if (ranked) showNameInput();
 }
@@ -1497,7 +1534,7 @@ function drawResult() {
   ctx.fillStyle = "#fff"; ctx.font = "bold 34px sans-serif"; ctx.fillText(E.score.toLocaleString(), lx + 66, ly + 56);
   ctx.textAlign = "right"; ctx.font = "bold 16px sans-serif";
   if (R.rank >= 0) { ctx.fillStyle = "#ffd740"; ctx.fillText(`ランキング ${R.rank + 1}位!`, lx + lw - 16, ly + 52); }
-  else { ctx.fillStyle = "#78909c"; ctx.fillText("ランキング外", lx + lw - 16, ly + 52); }
+  else { ctx.fillStyle = "#78909c"; ctx.fillText(DEBUG_START ? "デバッグ(記録しない)" : "ランキング外", lx + lw - 16, ly + 52); }
   ctx.textAlign = "left"; ctx.font = "12px sans-serif"; ctx.fillStyle = "#b0bec5";
   if (cleared && S.clearBonus) {
     const B = S.clearBonus;
@@ -2083,8 +2120,9 @@ function drawTitle() {
   ];
   lines.forEach((l, i) => ctx.fillText(l, W / 2, 215 + i * 28));
   ctx.fillStyle = "#fff"; ctx.font = "bold 22px sans-serif";
-  if (Math.floor(performance.now() / 500) % 2) ctx.fillText("クリックでスタート(チュートリアルから始まります)", W / 2, 400);
+  if (Math.floor(performance.now() / 500) % 2) ctx.fillText(DEBUG_START ? "クリックでスタート" : "クリックでスタート(チュートリアルから始まります)", W / 2, 400);
   if (MODE !== "normal") { ctx.fillStyle = "#ffd740"; ctx.font = "bold 16px sans-serif"; ctx.fillText(`― ${MODES[MODE].label} ―`, W / 2, 186); }
+  if (DEBUG_START) { ctx.fillStyle = "#80d8ff"; ctx.font = "bold 16px sans-serif"; ctx.fillText(`デバッグ: ${fmtTime(DEBUG_START.from)} から開始(ランキングには記録しません)`, W / 2, 440); }
 }
 
 function drawCenter(title, sub) {
