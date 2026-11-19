@@ -252,15 +252,16 @@ function clearMinutes() { return Math.round(FINAL.clearAt / 60); }
 //  入力
 // ============================================================
 const mouse = { x: W / 2, y: 200 };
-cv.addEventListener("mousemove", e => {
+function trackMouse(e) {
   lastInput = performance.now();
   const r = cv.getBoundingClientRect();
   mouse.x = (e.clientX - r.left) * (W / r.width);
   mouse.y = (e.clientY - r.top) * (H / r.height);
-});
+}
+cv.addEventListener("mousemove", trackMouse);
 cv.addEventListener("contextmenu", e => e.preventDefault());
 cv.addEventListener("mousedown", e => {
-  lastInput = performance.now();
+  trackMouse(e);   // 動かさずにクリックしても、押した位置で判定する
   sound.init(); bgm.unlock();
   if (e.button === 2) { if (state === "play") useBomb(); return; }
   onClick();
@@ -269,9 +270,21 @@ window.addEventListener("keydown", e => {
   const k = e.key.toLowerCase();
   lastInput = performance.now();
   bgm.unlock();
+  if (state === "over" || state === "clear") {   // 終了画面
+    const R = S.result;
+    if (R.naming) {   // 名前の入力中は、ゲームのキー操作を使わない(漢字変換中の Enter は決定にしない)
+      if (k === "enter" && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); commitName(nameInput.value); }
+      else if (k === "escape") commitName("");
+      else if (document.activeElement !== nameInput) nameInput.focus();
+      return;
+    }
+    if (k === "arrowleft" || k === "arrowright" || k === "tab") { e.preventDefault(); R.sel = 1 - R.sel; }
+    if (k === "enter") endAction(R.sel);
+    if (k === "escape") endAction(1);   // 次の人へ交代
+    return;
+  }
   if (state === "levelup" && ["1", "2", "3"].includes(k)) chooseUpgrade(+k - 1);
   if (k === "escape" && state === "play" && tut) { finishTutorial(true); return; }        // チュートリアルをスキップ
-  if (k === "escape" && (state === "over" || state === "clear")) { state = "title"; return; }  // 次の人へ交代
   if ((k === "p" || k === "escape") && (state === "play" || state === "pause")) state = state === "play" ? "pause" : "play";
   if (k === "m") sound.muted = !sound.muted;
   if (k === "t") autoAim = !autoAim;
@@ -279,7 +292,7 @@ window.addEventListener("keydown", e => {
   if (k === "g") PAPER.enabled = !PAPER.enabled;   // 紙風の表示を切り替え
   if (k === "f") frontOn = !frontOn;               // 手前の積み木を切り替え
   if ((k === " " || k === "b") && state === "play") { e.preventDefault(); useBomb(); }
-  if (k === "enter") { if (state === "title") startGame(true); else if (state === "over" || state === "clear") startGame(false); }
+  if (k === "enter" && state === "title") startGame(true);
 });
 
 // ============================================================
@@ -391,6 +404,7 @@ let lastInput = performance.now(), prevState = "title";
 
 function startGame(withTutorial) {
   sound.init();
+  hideNameInput();
   S = {
     hp: 100, maxHp: 100, time: 0, kills: 0, level: 1, xp: 0, xpNext: LEVEL.base,
     cards: {}, wcool: {}, evolved: {}, bombs: BOMB.start,
@@ -409,7 +423,11 @@ function startGame(withTutorial) {
 
 function onClick() {
   if (state === "title") { startGame(true); return; }                            // タイトルから: チュートリアル付き
-  if (state === "over" || state === "clear") { startGame(false); return; }       // リトライ: チュートリアルなし
+  if (state === "over" || state === "clear") {   // 終了画面: ボタンを押す(名前の入力中なら入力欄に戻す)
+    const i = endButtonAt(mouse.x, mouse.y);
+    if (i >= 0) endAction(i); else if (S.result.naming) nameInput.focus();
+    return;
+  }
   if (state === "levelup") {
     for (let i = 0; i < choices.length; i++) {
       const b = cardRect(i);
@@ -535,7 +553,7 @@ function update(dt) {
     const hpB = Math.ceil(Math.max(0, S.hp)) * SCORE.hpBonus;
     S.clearBonus = { clear: SCORE.clearBonus, hp: hpB };
     S.score += SCORE.clearBonus + hpB;
-    state = "clear"; sfx.lvl(); return;
+    finishRun(true); sfx.lvl(); return;
   }
   if (!tut) updateHeat(dt);
   if (tut) updateTutorial(dt);
@@ -638,7 +656,7 @@ function update(dt) {
   for (const f of fx) f.life -= dt;
   fx = fx.filter(f => f.life > 0);
 
-  if (S.hp <= 0) { S.hp = 0; state = "over"; sfx.bomb(); }
+  if (S.hp <= 0) { S.hp = 0; finishRun(false); sfx.bomb(); }
 }
 
 // ---- 武装 ----
@@ -1193,17 +1211,190 @@ function draw() {
   ctx.restore();
 
   if (state === "title") drawTitle();
-  if (state !== "title") drawHUD();
+  if (state !== "title" && state !== "over" && state !== "clear") drawHUD();   // 終了画面では結果だけを見せる
   if (state === "levelup") drawLevelUp();
   if (state === "pause") drawCenter("PAUSE", "P / Esc で再開");
-  if (state === "over") drawCenter("GAME OVER", `スコア ${S.score.toLocaleString()}   最高熱量 ×${S.maxHeat.toFixed(1)}\n生存 ${fmtTime(S.time)} ・ Lv ${S.level} ・ 撃破 ${S.kills}\n${buildText()}\nクリック / Enter: リトライ    Esc: タイトルへ(次の人へ交代)${idleNote()}`);
-  if (state === "clear") drawCenter("CLEAR!", `スコア ${S.score.toLocaleString()}   最高熱量 ×${S.maxHeat.toFixed(1)}\n(クリアボーナス +${(S.clearBonus?.clear ?? 0).toLocaleString()} ・ 残りHP +${(S.clearBonus?.hp ?? 0).toLocaleString()})\n${clearMinutes()}分間 生き残った! ・ Lv ${S.level} ・ 撃破 ${S.kills}\n大巨兵: ${S.finalKilled ? "撃破" : "撃破ならず"}\n${buildText()}\nクリック / Enter: もう一度    Esc: タイトルへ(次の人へ交代)${idleNote()}`);
+  if (state === "over" || state === "clear") drawResult();
   drawCrosshair();
 }
 
 function idleNote() {   // 放置されているとき、タイトルへ戻るまでの残り秒数
   const left = EVENT.idleToTitle - (performance.now() - lastInput) / 1000;
   return left < 10 ? `\n${Math.ceil(Math.max(0, left))}秒後にタイトルへ戻ります` : "";
+}
+
+// ============================================================
+//  終了画面(結果・ビルド・ランキング・ボタン)
+// ============================================================
+const RANK_KEY = `tridentwave_ranking_v1_${MODE}`;   // 10分モードと5分モードで別々に記録
+function loadRanking() {
+  try { const a = JSON.parse(localStorage.getItem(RANK_KEY) || "[]"); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+}
+function saveRanking(list) { try { localStorage.setItem(RANK_KEY, JSON.stringify(list)); } catch (e) {} }
+
+function buildList() {   // 持っているカード(武装→強化の順)
+  return ["weapon", "passive"].flatMap(type => ownedOf(type).map(c => ({ id: c.id, type, name: c.name, lv: lv(c.id), evo: S.evolved[c.id] ? EVO_OF[c.id].name : null })));
+}
+
+// ゲームが終わったとき: 結果をまとめ、ランキングに入るなら名前を聞く
+function finishRun(cleared) {
+  state = cleared ? "clear" : "over";
+  const entry = { name: "", score: S.score, time: Math.min(S.time, FINAL.clearAt), clear: cleared, titan: S.finalKilled,
+                  heat: S.maxHeat, lv: S.level, kills: S.kills, build: buildList(), date: Date.now() };
+  const list = loadRanking();
+  const rank = list.filter(r => r.score >= entry.score).length;   // 同点は先に登録した人が上
+  const ranked = entry.score > 0 && rank < RANKING.size;
+  S.result = { entry, list, rank: ranked ? rank : -1, naming: ranked, sel: 0, saved: false };
+  if (ranked) showNameInput();
+}
+function commitName(name) {
+  const R = S.result; if (!R || !R.naming) return;
+  R.entry.name = (name || "").trim().slice(0, RANKING.nameMax) || RANKING.defaultName;
+  R.list.splice(R.rank, 0, R.entry); R.list = R.list.slice(0, RANKING.size);
+  saveRanking(R.list); R.naming = false; R.saved = true;
+  hideNameInput(); sfx.item();
+}
+function endAction(i) {   // 0 = もう一度(チュートリアルなし) / 1 = タイトルへ(次の人へ交代。チュートリアルから)
+  if (S.result && S.result.naming) commitName(nameInput.value);   // 入力途中でも、そこまでの名前で登録する
+  hideNameInput();
+  if (i === 0) startGame(false); else state = "title";
+}
+
+// 名前の入力欄(日本語入力ができるよう、画面の上にHTMLの入力欄を重ねる)
+const nameInput = document.createElement("input");
+Object.assign(nameInput, { type: "text", maxLength: RANKING.nameMax, placeholder: RANKING.defaultName, autocomplete: "off" });
+Object.assign(nameInput.style, { position: "fixed", display: "none", zIndex: 10, boxSizing: "border-box", padding: "0 6px",
+  border: "2px solid #ffd740", borderRadius: "4px", background: "#fff8e1", color: "#1a1a1a", fontWeight: "bold", outline: "none" });
+document.body.appendChild(nameInput);
+function showNameInput() { nameInput.value = ""; nameInput.style.display = "block"; setTimeout(() => nameInput.focus(), 0); }
+function hideNameInput() { nameInput.style.display = "none"; nameInput.blur(); }
+function placeNameInput(x, y, w, h) {   // ゲーム画面の座標 → ページ上の位置
+  const r = cv.getBoundingClientRect(), k = r.width / W;
+  Object.assign(nameInput.style, { left: `${r.left + x * k}px`, top: `${r.top + y * k}px`, width: `${w * k}px`, height: `${h * k}px`, fontSize: `${14 * k}px` });
+}
+
+const END_BTN = [
+  { label: "もう一度", sub: "チュートリアルなしで すぐ始める" },
+  { label: "タイトルへ", sub: "次の人へ交代(チュートリアルから)" },
+];
+function endButtonRect(i) { const w = 300, h = 52, gap = 28, x0 = (W - (w * 2 + gap)) / 2; return { x: x0 + i * (w + gap), y: 462, w, h }; }
+function endButtonAt(x, y) { for (let i = 0; i < 2; i++) { const b = endButtonRect(i); if (x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h) return i; } return -1; }
+
+function fitFont(text, maxW, size, weight = "bold") {   // 枠に収まるまで文字を小さくする
+  do { ctx.font = `${weight} ${size}px sans-serif`; } while (ctx.measureText(text).width > maxW && --size > 8);
+}
+function panel(x, y, w, h, title) {
+  ctx.fillStyle = "rgba(20,26,50,0.92)"; ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = "#3a4570"; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h);
+  ctx.fillStyle = "#90caf9"; ctx.font = "bold 14px sans-serif"; ctx.textAlign = "left"; ctx.fillText(title, x + 14, y + 22);
+}
+
+function drawResult() {
+  const R = S.result, E = R.entry, cleared = state === "clear";
+  const hov = endButtonAt(mouse.x, mouse.y); if (hov >= 0) R.sel = hov;
+  ctx.fillStyle = "rgba(5,8,16,0.85)"; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = "center"; ctx.font = "bold 38px sans-serif"; ctx.fillStyle = cleared ? "#ffd740" : "#ff8a80";
+  ctx.fillText(cleared ? "CLEAR!" : "GAME OVER", W / 2, 50);
+
+  // ---- 左: 今回の結果とビルド ----
+  const lx = 24, ly = 70, lw = 452;
+  panel(lx, ly, lw, 376, `今回の結果  (${MODES[MODE].label})`);
+  ctx.textAlign = "left"; ctx.fillStyle = "#b0bec5"; ctx.font = "13px sans-serif"; ctx.fillText("スコア", lx + 16, ly + 52);
+  ctx.fillStyle = "#fff"; ctx.font = "bold 34px sans-serif"; ctx.fillText(E.score.toLocaleString(), lx + 66, ly + 56);
+  ctx.textAlign = "right"; ctx.font = "bold 16px sans-serif";
+  if (R.rank >= 0) { ctx.fillStyle = "#ffd740"; ctx.fillText(`ランキング ${R.rank + 1}位!`, lx + lw - 16, ly + 52); }
+  else { ctx.fillStyle = "#78909c"; ctx.fillText("ランキング外", lx + lw - 16, ly + 52); }
+  ctx.textAlign = "left"; ctx.font = "12px sans-serif"; ctx.fillStyle = "#b0bec5";
+  if (cleared && S.clearBonus) ctx.fillText(`(クリアボーナス +${S.clearBonus.clear.toLocaleString()} ・ 残りHP +${S.clearBonus.hp.toLocaleString()} を含む)`, lx + 16, ly + 76);
+  const stats = [
+    ["生存", cleared ? `${clearMinutes()}分間 生き残った!` : `${fmtTime(E.time)} / ${fmtTime(FINAL.clearAt)}`],
+    ["最高熱量", `×${E.heat.toFixed(1)}`],
+    ["レベル", `Lv ${E.lv}`],
+    ["撃破", `${E.kills.toLocaleString()} 体`],
+    ["大巨兵", E.titan ? "撃破!" : S.finalSpawned ? "撃破ならず" : "未到達"],
+  ];
+  stats.forEach(([k, v], i) => {
+    const x = lx + 16 + (i % 2) * 216, y = ly + 104 + Math.floor(i / 2) * 24;
+    ctx.fillStyle = "#78909c"; ctx.font = "13px sans-serif"; ctx.fillText(k, x, y);
+    ctx.fillStyle = k === "大巨兵" && E.titan ? "#ffd740" : "#eceff1"; ctx.font = "bold 14px sans-serif"; ctx.fillText(v, x + 66, y);
+  });
+  drawBuildCards(lx + 16, ly + 182, lw - 32, E.build);
+
+  // ---- 右: ランキング ----
+  const rx = 496, ry = 70, rw = 440;
+  panel(rx, ry, rw, 376, `ランキング  ${MODES[MODE].label}`);
+  const rows = R.naming ? [...R.list.slice(0, R.rank), E, ...R.list.slice(R.rank)].slice(0, RANKING.size) : R.list;
+  const cols = { rank: rx + 34, name: rx + 52, score: rx + 296, res: rx + 362, heat: rx + rw - 14 };
+  ctx.font = "11px sans-serif"; ctx.fillStyle = "#78909c";
+  ctx.textAlign = "right"; ctx.fillText("順位", cols.rank, ry + 46); ctx.fillText("スコア", cols.score, ry + 46); ctx.fillText("最高熱量", cols.heat, ry + 46);
+  ctx.textAlign = "left"; ctx.fillText("名前", cols.name, ry + 46); ctx.textAlign = "center"; ctx.fillText("結果", cols.res, ry + 46);
+  const rowH = 29;
+  for (let i = 0; i < RANKING.size; i++) {
+    const y = ry + 58 + i * rowH, r = rows[i], me = r === E;
+    if (me) { ctx.fillStyle = "rgba(255,215,64,0.18)"; ctx.fillRect(rx + 6, y, rw - 12, rowH - 3); }
+    else if (i % 2) { ctx.fillStyle = "rgba(255,255,255,0.03)"; ctx.fillRect(rx + 6, y, rw - 12, rowH - 3); }
+    const ty = y + 19;
+    ctx.textAlign = "right"; ctx.font = "bold 15px sans-serif"; ctx.fillStyle = i === 0 ? "#ffd740" : i === 1 ? "#cfd8dc" : i === 2 ? "#ffab91" : "#90a4ae";
+    ctx.fillText(`${i + 1}`, cols.rank, ty);
+    if (!r) { ctx.textAlign = "left"; ctx.fillStyle = "#455a64"; ctx.font = "13px sans-serif"; ctx.fillText("---", cols.name, ty); continue; }
+    if (me && R.naming) placeNameInput(cols.name - 4, y + 2, 170, rowH - 7);   // この行に名前の入力欄を重ねる
+    else { ctx.textAlign = "left"; ctx.fillStyle = me ? "#ffd740" : "#eceff1"; fitFont(r.name, 160, 14, me ? "bold" : "normal"); ctx.fillText(r.name, cols.name, ty); }
+    ctx.textAlign = "right"; ctx.font = "bold 14px sans-serif"; ctx.fillStyle = me ? "#ffd740" : "#fff"; ctx.fillText(r.score.toLocaleString(), cols.score, ty);
+    ctx.textAlign = "center"; ctx.font = "bold 12px sans-serif";
+    ctx.fillStyle = r.clear ? (r.titan ? "#ffd740" : "#69f0ae") : "#90a4ae";
+    ctx.fillText(r.clear ? (r.titan ? "★CLEAR" : "CLEAR") : fmtTime(r.time), cols.res, ty);
+    ctx.textAlign = "right"; ctx.font = "13px sans-serif"; ctx.fillStyle = "#ffcc80"; ctx.fillText(`×${r.heat.toFixed(1)}`, cols.heat, ty);
+  }
+  ctx.textAlign = "center"; ctx.font = "bold 13px sans-serif";
+  if (R.naming) { ctx.fillStyle = Math.floor(performance.now() / 400) % 2 ? "#ffd740" : "#fff59d"; ctx.fillText("ランキング入り! 名前を入力して Enter(空欄なら「" + RANKING.defaultName + "」)", rx + rw / 2, ry + 366); }
+  else if (R.saved) { ctx.fillStyle = "#69f0ae"; ctx.fillText("ランキングに登録しました", rx + rw / 2, ry + 366); }
+  else { ctx.fillStyle = "#78909c"; ctx.font = "12px sans-serif"; ctx.fillText("★CLEAR = 大巨兵も倒してクリア", rx + rw / 2, ry + 366); }
+
+  // ---- 下: ボタン ----
+  END_BTN.forEach((btn, i) => {
+    const b = endButtonRect(i), on = R.sel === i && !R.naming;
+    ctx.fillStyle = on ? "#2b3a6e" : "#1a2140"; ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.strokeStyle = on ? "#ffd740" : "#3a4570"; ctx.lineWidth = on ? 3 : 2; ctx.strokeRect(b.x, b.y, b.w, b.h);
+    ctx.textAlign = "center"; ctx.fillStyle = on ? "#fff" : "#b0bec5"; ctx.font = "bold 19px sans-serif"; ctx.fillText(btn.label, b.x + b.w / 2, b.y + 24);
+    ctx.font = "12px sans-serif"; ctx.fillStyle = on ? "#ffe082" : "#78909c"; ctx.fillText(btn.sub, b.x + b.w / 2, b.y + 42);
+  });
+  ctx.textAlign = "center"; ctx.font = "12px sans-serif"; ctx.fillStyle = "#78909c";
+  const note = idleNote().trim();
+  ctx.fillText(R.naming ? "名前を決めると、ボタンを選べます(ボタンをクリックしても登録されます)" : `←→ で選んで Enter / クリック    Esc: タイトルへ${note ? "    " + note : ""}`, W / 2, H - 10);
+}
+
+// ビルド: 武装4枠・強化4枠をカードで並べる。進化したものは金色
+function drawBuildCards(x, y, w, build) {
+  const cw = (w - 3 * 8) / 4, ch = 70;
+  ["weapon", "passive"].forEach((type, row) => {
+    const owned = build.filter(c => c.type === type), slots = type === "weapon" ? CARD_RULES.weaponSlots : CARD_RULES.passiveSlots;
+    const ry = y + row * (ch + 26);
+    ctx.textAlign = "left"; ctx.font = "bold 12px sans-serif"; ctx.fillStyle = TYPE_COLOR[type];
+    ctx.fillText(`${TYPE_LABEL[type]} ${owned.length}/${slots}`, x, ry - 6);
+    for (let i = 0; i < slots; i++) {
+      const cx = x + i * (cw + 8), c = owned[i];
+      if (!c) {   // 空き枠
+        ctx.strokeStyle = "#37474f"; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]); ctx.strokeRect(cx, ry, cw, ch); ctx.setLineDash([]);
+        ctx.textAlign = "center"; ctx.fillStyle = "#455a64"; ctx.font = "12px sans-serif"; ctx.fillText("空き", cx + cw / 2, ry + ch / 2 + 4);
+        continue;
+      }
+      const evo = !!c.evo, col = evo ? "#ffd740" : TYPE_COLOR[type];
+      ctx.fillStyle = evo ? "#3a3110" : "#1a2140"; ctx.fillRect(cx, ry, cw, ch);
+      ctx.strokeStyle = evo ? "#ffd740" : "#3a4570"; ctx.lineWidth = evo ? 2.5 : 1.5; ctx.strokeRect(cx, ry, cw, ch);
+      ctx.fillStyle = col; ctx.fillRect(cx, ry, cw, 3);
+      ctx.textAlign = "center";
+      if (evo) {
+        ctx.fillStyle = "#ffd740"; fitFont("★" + c.evo, cw - 8, 14); ctx.fillText("★" + c.evo, cx + cw / 2, ry + 26);
+        ctx.fillStyle = "#bcaaa4"; fitFont(`(${c.name})`, cw - 8, 11, "normal"); ctx.fillText(`(${c.name})`, cx + cw / 2, ry + 44);
+        ctx.fillStyle = "#ffd740"; ctx.font = "bold 11px sans-serif"; ctx.fillText("進化!", cx + cw / 2, ry + 60);
+      } else {
+        ctx.fillStyle = "#fff"; fitFont(c.name, cw - 8, 14); ctx.fillText(c.name, cx + cw / 2, ry + 28);
+        const pw = 12, pg = 3, px = cx + (cw - (pw * CARD_RULES.maxLevel + pg * (CARD_RULES.maxLevel - 1))) / 2;   // レベルの目盛り
+        for (let k = 0; k < CARD_RULES.maxLevel; k++) { ctx.fillStyle = k < c.lv ? col : "#37474f"; ctx.fillRect(px + k * (pw + pg), ry + 40, pw, 8); }
+        ctx.fillStyle = "#90a4ae"; ctx.font = "11px sans-serif"; ctx.fillText(c.lv >= CARD_RULES.maxLevel ? "Lv MAX" : `Lv ${c.lv}`, cx + cw / 2, ry + 62);
+      }
+    }
+  });
 }
 
 function buildText() {
@@ -1745,7 +1936,7 @@ function loop(now) {
   lastTime = now;
   if (state === "play") update(dt);
   if ((state === "over" || state === "clear") && prevState !== state) lastInput = now;   // 終了画面に入った時点から数える
-  if ((state === "over" || state === "clear") && now - lastInput > EVENT.idleToTitle * 1000) state = "title";
+  if ((state === "over" || state === "clear") && now - lastInput > EVENT.idleToTitle * 1000) endAction(1);   // 放置されたらタイトルへ
   prevState = state;
   bgm.update(dt);
   draw();
