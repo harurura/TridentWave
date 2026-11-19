@@ -624,6 +624,7 @@ function update(dt) {
   S.invuln = Math.max(0, S.invuln - dt);
   shake = Math.max(0, shake - dt * 30);
   if (S.banner) { S.banner.life -= dt; if (S.banner.life <= 0) S.banner = null; }
+  if (S.tip) { S.tip.life -= dt; if (S.tip.life <= 0) S.tip = null; }
 
   // --- クリア判定 ---
   if (S.time >= FINAL.clearAt) {
@@ -1177,6 +1178,24 @@ function openLevelUp() {
   state = "levelup"; sfx.lvl();
 }
 
+// 進化の組み合わせを初めて両方持ったとき、その場でヒントを出す(1つの組み合わせにつき1回)
+function evolveHint() {
+  S.evoHinted = S.evoHinted || {};
+  const v = EVOLUTIONS.find(v => !S.evolved[v.from] && !S.evoHinted[v.id] && lv(v.from) > 0 && lv(v.with) > 0);
+  if (!v) return;
+  S.evoHinted[v.id] = true;
+  S.tip = { text: `★ ${CARD[v.from].name} + ${CARD[v.with].name} → 両方Lv5で「${v.name}」に進化!`, life: 5 };
+}
+function drawTip() {   // その場のヒント(画面上の帯)
+  const t = S.tip; if (!t || t.life <= 0) return;
+  const y = tut ? 202 : 150;   // チュートリアル中は説明の枠の下に出す
+  ctx.globalAlpha = Math.min(1, t.life, (5 - t.life) * 4);
+  ctx.fillStyle = "rgba(40,30,0,0.75)"; ctx.fillRect(W / 2 - 300, y, 600, 30);
+  ctx.strokeStyle = "#ffd740"; ctx.lineWidth = 1.5; ctx.strokeRect(W / 2 - 300, y, 600, 30);
+  ctx.textAlign = "center"; ctx.fillStyle = "#ffd740"; fitFont(t.text, 580, 15); ctx.fillText(t.text, W / 2, y + 20);
+  ctx.globalAlpha = 1; ctx.textAlign = "left";
+}
+
 function chooseUpgrade(i) {
   const c = choices[i]; if (!c) return;
   if (c.id === "heal") S.hp = Math.min(S.maxHp, S.hp + S.maxHp * 0.3);
@@ -1184,7 +1203,7 @@ function chooseUpgrade(i) {
   else if (c.type === "evolve") {
     S.evolved[c.evo.from] = true; banner(`進化! ${CARD[c.evo.from].name} → ${c.name}`, "#ffd740"); sfx.lvl();
   }
-  else { S.cards[c.id] = lv(c.id) + 1; recalc(); }
+  else { S.cards[c.id] = lv(c.id) + 1; recalc(); evolveHint(); }
   state = "play";
   if (tut) tut.chosen = true;
 }
@@ -1202,7 +1221,7 @@ const TUTORIAL = [
     start() { tut.queue = [["grunt", "L", 0.3], ["grunt", "R", 1.5], ["diver", null, 2.7], ["runner", "L", 4], ["grunt", "R", 4.8], ["diver", null, 5.6]]; },
     done: () => tut.queue.length === 0 && enemies.length === 0 },
   { title: "カードで強くなる",
-    text: "倒した敵が落とす経験値(ひし形の粒)が集まると、レベルアップしてカードを1枚選べます",
+    text: "経験値(ひし形の粒)を集めるとレベルアップしてカードを1枚選べる。武装と強化の組み合わせ次第で、両方Lv5で★進化!",
     start() { tut.wait = 1.5; tut.lv0 = S.level; },
     update(dt) { if (tut.wait > 0 && (tut.wait -= dt) <= 0 && S.level === tut.lv0) { S.xp = Math.max(S.xp, S.xpNext); gainXp(0); } },
     done: () => tut.chosen },
@@ -1225,7 +1244,7 @@ const TUTORIAL = [
   { title: "熱量とスコア",
     text: () => S.heat < TUT_HEAT_GOAL
       ? "敵を素早く倒すと、画面上の「熱量」が上がる。熱量が上がるまで倒そう"
-      : "熱量が高いほど敵は増えて硬くなるが、スコアも倍増。被弾すると下がる",
+      : "熱量が高いほど敵は増えて硬くなるが、スコアも倍増。被弾やボムで下がる",
     start() {
       S.heat = HEAT.min; tut.heatOn = true;
       tut.queue = [["grunt", "L", 0.3], ["grunt", "R", 0.8], ["runner", "L", 1.4], ["grunt", "R", 1.9], ["diver", null, 2.4], ["grunt", "L", 3.0], ["runner", "R", 3.5], ["grunt", "L", 4.0]];
@@ -1347,8 +1366,25 @@ function finishRun(cleared) {
   const list = loadRanking();
   const rank = list.filter(r => r.score >= entry.score).length;   // 同点は先に登録した人が上
   const ranked = entry.score > 0 && rank < RANKING.size;
-  S.result = { entry, list, rank: ranked ? rank : -1, naming: ranked, sel: 0, saved: false };
+  S.result = { entry, list, rank: ranked ? rank : -1, naming: ranked, sel: 0, saved: false, tip: resultTip(cleared) };
   if (ranked) showNameInput();
+}
+// 結果画面のコツ: 今回のプレイに合わせて、次に役立つものを1つだけ選ぶ(上から順に当てはまったもの)
+function resultTip(cleared) {
+  const evolvedAny = Object.keys(S.evolved).length > 0, heat = S.maxHeat;
+  const tips = cleared ? [
+    [S.bombsUsed > 0, `ボムを使わずにクリアすると ノーボムボーナス(20万 × 最高熱量)! 今回なら +${(Math.round(SCORE.noBombBonus * heat / 10) * 10).toLocaleString()}`],
+    [heat < 4, "被弾せずに素早く倒し続けると熱量が上がり、スコアの倍率も上がる(最大×6.0)"],
+    [!evolvedAny, "武装と強化を両方Lv5にすると★進化。一気に強くなって、稼ぎやすくなる"],
+    [S.finalSpawned && !S.finalKilled, `9:00の大巨兵を倒すと +${SCORE.titanBonus.toLocaleString()} × 熱量 のボーナス`],
+    [!S.evolved.marker, "スコアを狙うなら 標的レーザー + 過給機 → ★賞金稼ぎ。熱量が×8.0まで上がる"],
+    [true, "マークした敵をまとめて倒し、熱量×8.0を保ってさらに上のスコアへ!"],
+  ] : [
+    [S.bombs > 0, "ボムを残したまま倒されました。囲まれたら迷わず 右クリック(Space)でボム!"],
+    [!evolvedAny, "武装と強化を両方Lv5にすると★進化。カード選択画面の「★進化」のヒントを見て選ぼう"],
+    [true, "装甲板でHPを増やしたり、♥やSのアイテムを撃って取ると生き残りやすい"],
+  ];
+  return tips.find(t => t[0])[1];
 }
 function commitName(name) {
   const R = S.result; if (!R || !R.naming) return;
@@ -1380,7 +1416,7 @@ const END_BTN = [
   { label: "もう一度", sub: "チュートリアルなしで すぐ始める" },
   { label: "タイトルへ", sub: "次の人へ交代(チュートリアルから)" },
 ];
-function endButtonRect(i) { const w = 300, h = 52, gap = 28, x0 = (W - (w * 2 + gap)) / 2; return { x: x0 + i * (w + gap), y: 462, w, h }; }
+function endButtonRect(i) { const w = 300, h = 44, gap = 28, x0 = (W - (w * 2 + gap)) / 2; return { x: x0 + i * (w + gap), y: 474, w, h }; }
 function endButtonAt(x, y) { for (let i = 0; i < 2; i++) { const b = endButtonRect(i); if (x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h) return i; } return -1; }
 
 function fitFont(text, maxW, size, weight = "bold") {   // 枠に収まるまで文字を小さくする
@@ -1420,12 +1456,12 @@ function drawResult() {
     ["レベル", `Lv ${E.lv}`],
     ["撃破", `${E.kills.toLocaleString()} 体`],
     ["大巨兵", E.titan ? "撃破!" : S.finalSpawned ? "撃破ならず" : "未到達"],
-    ["ボム", E.bombs === 0 ? "0回 ノーボム!" : `${E.bombs}回`],
+    ["ボム", E.bombs === 0 && cleared ? "0回 ノーボム!" : `${E.bombs}回`],   // ノーボムボーナスはクリアしたときだけ
   ];
   stats.forEach(([k, v], i) => {
     const x = lx + 16 + (i % 2) * 216, y = ly + 104 + Math.floor(i / 2) * 24;
     ctx.fillStyle = "#78909c"; ctx.font = "13px sans-serif"; ctx.fillText(k, x, y);
-    ctx.fillStyle = (k === "大巨兵" && E.titan) || (k === "ボム" && E.bombs === 0) ? "#ffd740" : "#eceff1"; ctx.font = "bold 14px sans-serif"; ctx.fillText(v, x + 66, y);
+    ctx.fillStyle = (k === "大巨兵" && E.titan) || (k === "ボム" && E.bombs === 0 && cleared) ? "#ffd740" : "#eceff1"; ctx.font = "bold 14px sans-serif"; ctx.fillText(v, x + 66, y);
   });
   drawBuildCards(lx + 16, ly + 182, lw - 32, E.build);
 
@@ -1464,9 +1500,11 @@ function drawResult() {
     const b = endButtonRect(i), on = R.sel === i && !R.naming;
     ctx.fillStyle = on ? "#2b3a6e" : "#1a2140"; ctx.fillRect(b.x, b.y, b.w, b.h);
     ctx.strokeStyle = on ? "#ffd740" : "#3a4570"; ctx.lineWidth = on ? 3 : 2; ctx.strokeRect(b.x, b.y, b.w, b.h);
-    ctx.textAlign = "center"; ctx.fillStyle = on ? "#fff" : "#b0bec5"; ctx.font = "bold 19px sans-serif"; ctx.fillText(btn.label, b.x + b.w / 2, b.y + 24);
-    ctx.font = "12px sans-serif"; ctx.fillStyle = on ? "#ffe082" : "#78909c"; ctx.fillText(btn.sub, b.x + b.w / 2, b.y + 42);
+    ctx.textAlign = "center"; ctx.fillStyle = on ? "#fff" : "#b0bec5"; ctx.font = "bold 18px sans-serif"; ctx.fillText(btn.label, b.x + b.w / 2, b.y + 21);
+    ctx.font = "12px sans-serif"; ctx.fillStyle = on ? "#ffe082" : "#78909c"; ctx.fillText(btn.sub, b.x + b.w / 2, b.y + 37);
   });
+  // 次に役立つコツ(パネルとボタンのあいだ)
+  ctx.textAlign = "center"; ctx.fillStyle = "#fff59d"; fitFont("TIPS  " + R.tip, W - 60, 14); ctx.fillText("TIPS  " + R.tip, W / 2, 465);
   ctx.textAlign = "center"; ctx.font = "12px sans-serif"; ctx.fillStyle = "#78909c";
   const note = idleNote().trim();
   ctx.fillText(R.naming ? "名前を決めると、ボタンを選べます(ボタンをクリックしても登録されます)" : `←→ で選んで Enter / クリック    Esc: タイトルへ${note ? "    " + note : ""}`, W / 2, H - 10);
@@ -1881,6 +1919,7 @@ function drawHUD() {
   if (!tut || tut.heatOn) drawScoreHeat();
   if (tut) drawTutorial();
   drawBanner();
+  drawTip();
   if (debug) drawDebug();
 }
 
