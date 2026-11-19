@@ -1469,7 +1469,8 @@ function drawResult() {
   const rx = 496, ry = 70, rw = 440;
   panel(rx, ry, rw, 376, `ランキング  ${MODES[MODE].label}`);
   const rows = R.naming ? [...R.list.slice(0, R.rank), E, ...R.list.slice(R.rank)].slice(0, RANKING.size) : R.list;
-  const cols = { rank: rx + 34, name: rx + 52, score: rx + 296, res: rx + 362, heat: rx + rw - 14 };
+  // 列の位置。名前は nameW まで、スコアは scoreW まで(大きな数字は文字を小さくして収める)ので、重ならない
+  const cols = { rank: rx + 34, name: rx + 48, nameW: 146, score: rx + 318, scoreW: 116, res: rx + 368, heat: rx + rw - 12 };
   ctx.font = "11px sans-serif"; ctx.fillStyle = "#78909c";
   ctx.textAlign = "right"; ctx.fillText("順位", cols.rank, ry + 46); ctx.fillText("スコア", cols.score, ry + 46); ctx.fillText("最高熱量", cols.heat, ry + 46);
   ctx.textAlign = "left"; ctx.fillText("名前", cols.name, ry + 46); ctx.textAlign = "center"; ctx.fillText("結果", cols.res, ry + 46);
@@ -1482,9 +1483,10 @@ function drawResult() {
     ctx.textAlign = "right"; ctx.font = "bold 15px sans-serif"; ctx.fillStyle = i === 0 ? "#ffd740" : i === 1 ? "#cfd8dc" : i === 2 ? "#ffab91" : "#90a4ae";
     ctx.fillText(`${i + 1}`, cols.rank, ty);
     if (!r) { ctx.textAlign = "left"; ctx.fillStyle = "#455a64"; ctx.font = "13px sans-serif"; ctx.fillText("---", cols.name, ty); continue; }
-    if (me && R.naming) placeNameInput(cols.name - 4, y + 2, 170, rowH - 7);   // この行に名前の入力欄を重ねる
-    else { ctx.textAlign = "left"; ctx.fillStyle = me ? "#ffd740" : "#eceff1"; fitFont(r.name, 160, 14, me ? "bold" : "normal"); ctx.fillText(r.name, cols.name, ty); }
-    ctx.textAlign = "right"; ctx.font = "bold 14px sans-serif"; ctx.fillStyle = me ? "#ffd740" : "#fff"; ctx.fillText(r.score.toLocaleString(), cols.score, ty);
+    if (me && R.naming) placeNameInput(cols.name - 4, y + 2, cols.nameW + 4, rowH - 7);   // この行に名前の入力欄を重ねる
+    else { ctx.textAlign = "left"; ctx.fillStyle = me ? "#ffd740" : "#eceff1"; fitFont(r.name, cols.nameW, 14, me ? "bold" : "normal"); ctx.fillText(r.name, cols.name, ty); }
+    const sc = r.score.toLocaleString();
+    ctx.textAlign = "right"; ctx.fillStyle = me ? "#ffd740" : "#fff"; fitFont(sc, cols.scoreW, 14); ctx.fillText(sc, cols.score, ty);
     ctx.textAlign = "center"; ctx.font = "bold 12px sans-serif";
     ctx.fillStyle = r.clear ? (r.titan ? "#ffd740" : "#69f0ae") : "#90a4ae";
     ctx.fillText(r.clear ? (r.titan ? "★CLEAR" : "CLEAR") : fmtTime(r.time), cols.res, ty);
