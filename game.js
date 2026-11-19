@@ -451,8 +451,7 @@ function recalc() {
   S.bounce = lv("bounce");
   S.maxHp = 100 + PASSIVE.armorHp * lv("armor");
   S.dmgTaken = 1 - PASSIVE.armorCut * lv("armor");
-  S.regen = PASSIVE.regen * lv("regen");
-  S.xpMul = 1 + PASSIVE.learn * lv("learn");
+  S.xpMul = 1;
   if (S.maxHp > oldMax) S.hp += S.maxHp - oldMax;
 }
 function ownedOf(type) { return CARDS.filter(c => c.type === type && lv(c.id) > 0); }
@@ -465,7 +464,7 @@ function spawnEnemy(type, forceSide, forceTier) {
   const tier = forceTier != null ? forceTier : rollTier();
   const T = TIERS[tier];
   const hpBoost = type === "titan" ? HEAT.titanHpBoost : HEAT.hpBoost;   // 大巨兵は熱量で硬くなる割合を弱める
-  const hp = d.hp * T.hp * (S && !tut ? 1 + (S.heat - HEAT.min) * hpBoost : 1);   // 熱量が高いと少し硬くなる
+  const hp = d.hp * T.hp * (S && !tut ? 1 + (heatEff() - HEAT.min) * hpBoost : 1);   // 熱量が高いと少し硬くなる
   const e = { type, d, tier, T, hp, maxHp: hp, r: d.r * (1 + tier * 0.1), speed: d.speed * (0.9 + Math.random() * 0.2),
               color: tier ? mixColor(d.color, T.tint, 0.55) : d.color,
               flash: 0, t: Math.random() * 10, age: 0, cool: 2 + Math.random(), spdMul: 1 };
@@ -541,7 +540,6 @@ function strongestEnemy() {
 // ============================================================
 function update(dt) {
   if (!tut) S.time += dt;   // チュートリアル中は時間を進めない
-  S.hp = Math.min(S.maxHp, S.hp + S.regen * dt);
   S.hurtFlash = Math.max(0, S.hurtFlash - dt);
   S.shield = Math.max(0, S.shield - dt);
   S.invuln = Math.max(0, S.invuln - dt);
@@ -593,7 +591,7 @@ function update(dt) {
   // --- 主砲の自動連射 ---
   S.fireCool -= dt;
   if (S.fireCool <= 0) {
-    S.fireCool = S.fireInt;
+    S.fireCool = S.fireInt * (1 - PASSIVE.rateHeat * lv("rate") * (Math.min(S.heat, HEAT.max) - HEAT.min));   // 過給機: 熱量が高いほど速い
     for (let i = 0; i < S.multi; i++) {
       const a = ang + (i - (S.multi - 1) / 2) * 0.12;
       fireBullet(AIM.x + Math.cos(a) * MUZZLE, AIM.y + Math.sin(a) * MUZZLE, a,
@@ -676,7 +674,7 @@ function flakUnit(i) {
 const FLAK_POS = { get x() { return flakUnit(0).muzzle.x; }, get y() { return flakUnit(0).muzzle.y; } };   // 1基目の砲口
 
 function updateWeapons(dt) {
-  for (const id of ["ground", "flak", "mine", "missile", "thunder", "nova"]) {
+  for (const id of ["ground", "flak", "mine", "missile", "thunder", "nova", "marker"]) {
     const L = lv(id); if (!L) continue;
     S.wcool[id] = (S.wcool[id] ?? 0.3) - dt;
     if (S.wcool[id] > 0) continue;
@@ -752,6 +750,16 @@ function updateWeapons(dt) {
       if (fired) sfx.zap();
     } else if (id === "nova") {
       if (nearestEnemy(P, null, novaRadius())) { novaBlast(1, 1); fired = true; }
+    } else if (id === "marker") {
+      // 標的レーザー: マークしていない敵のうち、スコアの高い(大きい・上位の)敵から順にマークする
+      const ts = enemies.filter(e => e.hp > 0 && !(e.mark > 0) && dist(e, P) < Wp.range)
+        .sort((a, b) => (b.d.xp * b.T.score) - (a.d.xp * a.T.score) || dist(a, P) - dist(b, P)).slice(0, Wp.marks(L));
+      for (const t of ts) {
+        t.mark = MARK.duration;
+        fx.push({ type: "laser", x1: AIM.x, y1: AIM.y, x2: t.x, y2: t.y, life: 0.25, max: 0.25, color: S.evolved.marker ? "#ffd740" : "#ff5252" });
+        damageEnemy(t, Wp.dmg(L) * S.dmgMul);
+      }
+      if (ts.length) { sound.play(1800, 0.06, "sine", 0.02, 600); fired = true; }
     }
     const evoInt = !S.evolved[id] ? 1 : id === "ground" ? EVOLVE.heavy.intervalMul : id === "flak" ? EVOLVE.aaBattery.intervalMul : id === "thunder" ? EVOLVE.storm.intervalMul : 1;
     S.wcool[id] = fired ? Wp.interval(L) * evoInt : 0.15;
@@ -760,7 +768,7 @@ function updateWeapons(dt) {
 
 // 減速の効き目(0〜1): 熱量が高いほど、大きい敵ほど効きにくい
 function slowEffect(e) {
-  const heat = tut ? 1 : Math.max(0, 1 - (S.heat - HEAT.min) * SLOW_RESIST.perHeat);
+  const heat = tut ? 1 : Math.max(0, 1 - (heatEff() - HEAT.min) * SLOW_RESIST.perHeat);
   const size = e.d.boss ? SLOW_RESIST.boss : e.type === "brute" ? SLOW_RESIST.brute : 1;
   return heat * size;
 }
@@ -858,6 +866,7 @@ function updateEnemies(dt) {
   for (const e of enemies) {
     if (e.hp <= 0) continue;
     e.t += dt; e.age += dt; e.flash = Math.max(0, e.flash - dt);
+    if (e.mark > 0) e.mark -= dt;   // 標的マークの残り時間
     const inField = slowL && dist(e, P) < slowR + e.r;
     e.spdMul = inField ? 1 - slowF * (grav && !G.resist ? 1 : slowEffect(e)) : 1;   // 重力場は効きにくさを掛けない(元の強さ)
     if (inField && gravHit) { damageEnemy(e, G.dps * G.tick * S.dmgMul); if (e.hp <= 0) continue; }
@@ -899,7 +908,10 @@ function updateHeat(dt) {
   if (near >= HEAT.crowdCount) drop += HEAT.crowdDropPerSec;
   S.heat = Math.max(HEAT.min, S.heat - drop * dt);
 }
-function heatSpawnMul() { return 1 + (S.heat - HEAT.min) * HEAT.spawnBoost; }
+// 熱量の上限(賞金稼ぎでは上がる)と、敵の強さに使う熱量(×6.0を超えた分は敵には効かない)
+function heatMax() { return S && S.evolved && S.evolved.marker ? EVOLVE.bounty.heatMax : HEAT.max; }
+function heatEff() { return Math.min(S.heat, HEAT.max); }
+function heatSpawnMul() { return 1 + (heatEff() - HEAT.min) * HEAT.spawnBoost; }
 function spawnInterval() { return Math.max(SPAWN.minInterval, SPAWN.startInterval - S.time * SPAWN.rampPerSec) / heatSpawnMul(); }
 function spawnPerSec() { return (1 + Math.floor(S.time / SPAWN.batchEvery)) / spawnInterval(); }   // 今の出現ペース(体/秒の目安)
 function heatPerKill() { return HEAT.gainPerSec / spawnPerSec(); }   // 敵が多いほど1体あたりは少なく(終盤でも上がる速さを一定に)
@@ -922,6 +934,7 @@ function overTitan(e, t) {
 
 function damageEnemy(e, dmg) {
   if (e.hp <= 0) return;
+  if (e.mark > 0) dmg *= 1 + MARK.vuln;   // 標的マーク: 受けるダメージが増える
   e.hp -= dmg; e.flash = 0.08;
   sfx.hit();
   if (e.hp <= 0) killEnemy(e);
@@ -932,10 +945,18 @@ function killEnemy(e) {
   if (!tut || tut.heatOn) {   // スコア(熱量が倍率)と熱量の上昇(チュートリアルでは熱量の手順だけ)
     let pts = e.d.xp * e.T.score * SCORE.perXp;
     if (e.type === "boss") pts += SCORE.bossBonus; else if (e.type === "titan") pts += SCORE.titanBonus;
+    const marked = e.mark > 0, bounty = S.evolved.marker;
+    if (marked) pts *= bounty ? EVOLVE.bounty.score : MARK.score;   // 標的マーク: スコアが増える
     pts = Math.round(pts * S.heat / 10) * 10;
     S.score += pts;
     if (e.d.boss) floatText(e.x, e.y - e.r - 20, `+${pts.toLocaleString()}`, "#f0e442");
-    if (!bombing) S.heat = Math.min(HEAT.max, S.heat + (tut ? TUT_HEAT_GAIN : heatPerKill() * (e.age <= HEAT.fastKillTime ? HEAT.fastBonus : 1)));   // ボムで倒した分は上げない
+    else if (marked) floatText(e.x, e.y - e.r - 10, `+${pts.toLocaleString()}`, bounty ? "#ffd740" : "#ff8a80");
+    if (marked && bounty) {   // 賞金稼ぎ: 近くのマークしていない敵へ、マークが移る
+      const near = enemies.filter(o => o !== e && o.hp > 0 && !(o.mark > 0) && dist(o, e) < EVOLVE.bounty.chainRange)
+        .sort((a, b) => dist(a, e) - dist(b, e)).slice(0, EVOLVE.bounty.chain);
+      for (const o of near) { o.mark = MARK.duration; fx.push({ type: "laser", x1: e.x, y1: e.y, x2: o.x, y2: o.y, life: 0.2, max: 0.2, color: "#ffd740" }); }
+    }
+    if (!bombing) S.heat = Math.min(heatMax(), S.heat + (tut ? TUT_HEAT_GAIN : heatPerKill() * (e.age <= HEAT.fastKillTime ? HEAT.fastBonus : 1)));   // ボムで倒した分は上げない
     S.maxHeat = Math.max(S.maxHeat, S.heat);
   }
   if (e.type === "titan") { S.finalKilled = true; banner("大巨兵 撃破!", "#ffd54f"); }
@@ -976,7 +997,7 @@ function hurtPlayer(raw) {
   floatText(P.x, P.y - 40, "-" + dmg, "#ff8a80");
   // 無敵時間を付け、周りの敵を押し返す(ダメージなし)
   S.invuln = HURT.invuln;
-  if (!tut) S.heat = Math.max(HEAT.min, S.heat - HEAT.hurtDrop);   // 被弾で熱量が下がる
+  if (!tut) S.heat = Math.max(HEAT.min, S.heat - HEAT.hurtDrop - PASSIVE.rateHurt * lv("rate"));   // 被弾で熱量が下がる(過給機があると多く下がる)
   if (S.evolved.nova) novaBlast(EVOLVE.counter.counterDmgMul, EVOLVE.counter.counterKnockMul);   // 反撃衝撃波
   for (const e of enemies) if (e.hp > 0 && dist(e, P) < HURT.pushRadius + e.r) knockback(e, P.x, P.y, HURT.push);
   fx.push({ type: "ring", r: HURT.pushRadius, life: 0.3, max: 0.3, color: "255,138,128" });
@@ -1445,6 +1466,7 @@ function drawWorld() {
     drawEnemy(e);
     if (see) ctx.globalAlpha = 1;
   }
+  for (const e of enemies) if (e.hp > 0 && e.mark > 0) drawMark(e);   // 標的マーク
   for (const eb of ebullets) drawEnemyBullet(eb);
   // 砲台(画像があれば画像、無ければ図形)
   if (lv("ground")) for (const side of [-1, 1]) {
@@ -1473,7 +1495,10 @@ function drawWorld() {
   drawPlayer();
   // エフェクト
   for (const f of fx) {
-    if (f.type === "bolt") {
+    if (f.type === "laser") {   // 標的レーザー
+      ctx.strokeStyle = f.color; ctx.globalAlpha = f.life / f.max; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(f.x1, f.y1); ctx.lineTo(f.x2, f.y2); ctx.stroke(); ctx.globalAlpha = 1;
+    } else if (f.type === "bolt") {
       ctx.strokeStyle = f.color || "#fff59d"; ctx.lineWidth = 3; ctx.globalAlpha = f.life / 0.15;
       ctx.beginPath(); ctx.moveTo(f.pts[0].x, f.pts[0].y);
       for (let i = 1; i < f.pts.length; i++) {
@@ -1557,6 +1582,17 @@ function drawEnemyShape(e) {
 }
 
 // 上位種の輪・減速の印・HPバー(oy = 跳ねている分の上下のずれ)
+// 標的マーク: 敵の上に回る照準を描く(賞金稼ぎでは金色)。残りが少ないと点滅
+function drawMark(e) {
+  if (e.mark < 1.2 && Math.floor(e.mark * 8) % 2) return;
+  const r = (e.art ? Math.max(e.r, e.artH * 0.35) : e.r) + 6, a = performance.now() / 400;
+  ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(a);
+  ctx.strokeStyle = S.evolved.marker ? "#ffd740" : "#ff5252"; ctx.lineWidth = 2.5;
+  for (let i = 0; i < 4; i++) { ctx.rotate(Math.PI / 2); ctx.beginPath(); ctx.arc(0, 0, r, -0.45, 0.45); ctx.stroke(); }
+  ctx.beginPath(); ctx.moveTo(r - 6, 0); ctx.lineTo(r + 6, 0); ctx.stroke();
+  ctx.restore();
+}
+
 function drawEnemyMarks(e, oy) {
   if (e.tier > 0) {   // 上位種は輪で示す。色だけに頼らないよう、段階の数だけ輪を重ねる(強化1本・精鋭2本・異形3本)
     ctx.strokeStyle = e.T.tint; ctx.lineWidth = 2;
@@ -1871,7 +1907,7 @@ function drawCenter(title, sub) {
 
 // 画面上部の中央: スコアと熱量
 function drawScoreHeat() {
-  const cx = W / 2, k = (S.heat - HEAT.min) / (HEAT.max - HEAT.min);
+  const cx = W / 2, k = (Math.min(S.heat, HEAT.max) - HEAT.min) / (HEAT.max - HEAT.min);
   if (tut && tut.heatOn) {   // チュートリアル: ゲージを点滅する枠で囲んで、どこを見ればいいか示す
     ctx.strokeStyle = `rgba(240,228,66,${0.5 + 0.5 * Math.sin(performance.now() / 150)})`; ctx.lineWidth = 3;
     ctx.strokeRect(cx - 104, 6, 290, 52);
@@ -1882,8 +1918,14 @@ function drawScoreHeat() {
   ctx.fillStyle = "#000a"; ctx.fillRect(bx, by, bw, 8);
   ctx.fillStyle = k < 0.33 ? "#f0e442" : k < 0.66 ? "#e69f00" : "#d55e00"; ctx.fillRect(bx, by, bw * k, 8);
   ctx.strokeStyle = "#ffffff55"; ctx.lineWidth = 1; ctx.strokeRect(bx, by, bw, 8);
-  ctx.font = "bold 12px sans-serif"; ctx.fillStyle = "#e0e0e0"; ctx.textAlign = "left";
-  ctx.fillText(`熱量 ×${S.heat.toFixed(1)}`, bx + bw + 8, by + 8);
+  const over = heatMax() > HEAT.max;   // 賞金稼ぎ: ×6.0を超えた分(オーバーヒート)をゲージの下に金色で重ねる
+  if (over) {
+    const ko = Math.max(0, S.heat - HEAT.max) / (heatMax() - HEAT.max);
+    ctx.fillStyle = "#000a"; ctx.fillRect(bx, by + 10, bw, 4);
+    ctx.fillStyle = "#ffd740"; ctx.fillRect(bx, by + 10, bw * ko, 4);
+  }
+  ctx.font = "bold 12px sans-serif"; ctx.fillStyle = over && S.heat > HEAT.max ? "#ffd740" : "#e0e0e0"; ctx.textAlign = "left";
+  ctx.fillText(`熱量 ×${S.heat.toFixed(1)}${over && S.heat > HEAT.max ? " OVER" : ""}`, bx + bw + 8, by + 8);
   ctx.textAlign = "left";
 }
 

@@ -110,19 +110,26 @@ const WEAPON = {
   thunder: { interval: L => 1.8 - 0.15 * L, dmg: L => 1.2 + 0.5 * L, chain: L => 1 + L },   // Lv5で 1.05秒ごと・威力3.7・6体まで連鎖
   nova:    { interval: L => 5 - 0.5 * L, dmg: L => 2 + L, radius: L => 110 + 20 * L, knock: L => 60 + 15 * L },
   slow:    { radius: L => 120 + 20 * L, factor: L => Math.min(0.45, 0.2 + 0.05 * L) },   // Lv5で 半径220・45%減速
+  // 標的レーザー: 敵に「標的マーク」を付ける。マークされた敵は全武器から受けるダメージが増え、倒したときのスコアも増える
+  marker:  { interval: L => 3.0 - 0.25 * L, marks: L => 1 + L, dmg: L => 0.5 + 0.2 * L, range: 520 },   // Lv5で 1.75秒ごと・6体にマーク
+};
+const MARK = {
+  duration: 6,         // マークが続く秒数
+  vuln: 0.25,          // マークされた敵が受けるダメージ +25%
+  score: 1.5,          // マークされた敵を倒したときのスコア倍率
 };
 
 // ---- 強化の効果(1Lvごと) ----
 const PASSIVE = {
   power: 0.20,         // 火力強化: 全武器のダメージ +20%
-  rate: 0.85,          // 連射機構: 発射間隔 ×0.85
+  rate: 0.85,          // 過給機: 主砲の発射間隔 ×0.85
+  rateHeat: 0.012,     //         さらに 熱量が1上がるごとに 発射間隔 -1.2% × Lv(Lv5・熱量×6.0で -30%)
+  rateHurt: 0.2,       //         その代わり、被弾で下がる熱量が +0.2 × Lv(Lv5で +1.0)
   caliberSize: 2,      // 大口径弾: 弾の半径 +2
   caliberDmg: 0.15,    //           威力 +15%
   caliberSpeed: 0.10,  //           弾速 -10%
   armorHp: 25,         // 装甲板: 最大HP +25
   armorCut: 0.05,      //         受けるダメージ -5%
-  regen: 0.6,          // 自己修復: 毎秒HP +0.6
-  learn: 0.15,         // 学習回路: 経験値 +15%
 };
 
 // ---- 進化(武装Lv5 + 対応する強化Lv5 で、レベルアップ時に候補に出る) ----
@@ -133,6 +140,7 @@ const EVOLVE = {
   leapMine:  { extraMax: 2, radiusMul: 1.3, airHeight: 150, airReach: 260 },   // 跳躍地雷: 設置数の追加・爆発範囲の倍率・跳び上がって爆発する高さ・反応する上空の高さ
   storm:     { bolts: 3, reach: 520, jump: 220, chainBonus: 1, dmgMul: 1.2, intervalMul: 0.85 },  // 雷嵐: 雷の数・最初に狙える距離・連鎖が飛ぶ距離・連鎖数の追加・威力倍率・発射間隔倍率(雷撃を弱めた分を取り戻す)
   counter:   { radiusMul: 1.25, counterDmgMul: 2, counterKnockMul: 1.5 },      // 反撃衝撃波: 範囲の倍率・被弾したときに出る衝撃波の威力倍率・押し戻し倍率
+  bounty:    { score: 2, chain: 2, chainRange: 200, heatMax: 8.0 },          // 賞金稼ぎ: マークした敵のスコア倍率・倒したときにマークが移る数・移る距離・熱量の上限(×6.0を超えた分はスコアだけに効き、敵は強くならない)
   gravity:   { dps: 5, tick: 0.5, slow: 0.75, radiusMul: 1.15, resist: false },  // 重力場: 中の敵への秒間ダメージ(火力強化が掛かる)・ダメージの間隔(秒)・減速率・範囲の倍率・下の「効きにくさ」を掛けるか
 };
 // ---- 減速の効きにくさ(減速フィールドに掛かる。重力場は gravity.resist が true のときだけ) ----
@@ -149,6 +157,7 @@ const EVOLUTIONS = [
   { id: "storm",     from: "thunder", with: "spread",  name: "雷嵐",               desc: "雷が3本に分かれて別々の敵に落ち、遠くまで連鎖する" },
   { id: "counter",   from: "nova",    with: "armor",   name: "反撃衝撃波",         desc: "範囲が広がり、被弾した瞬間に強力な衝撃波で反撃する" },
   { id: "gravity",   from: "slow",    with: "power",   name: "重力場",             desc: "フィールドの中の敵を強く減速させ、押しつぶしてダメージを与える" },
+  { id: "bounty",    from: "marker",  with: "rate",    name: "賞金稼ぎ",           desc: "マークした敵を倒すと近くへ連鎖し、スコア×2。熱量の上限が×8.0に上がる" },
 ];
 
 // ============================================================
@@ -163,17 +172,16 @@ const CARDS = [
   { id: "thunder", type: "weapon", name: "雷撃",         desc: () => "近くの敵に雷を落とし、次々と連鎖させる",     up: "連鎖数・連射・威力アップ" },
   { id: "nova",    type: "weapon", name: "衝撃波",       desc: () => "周りの敵を定期的に吹き飛ばす。敵弾も消す",   up: "範囲・間隔・威力アップ" },
   { id: "slow",    type: "weapon", name: "減速フィールド", desc: () => "自機の周りに入った敵の動きを遅くする",     up: "範囲・減速率アップ" },
+  { id: "marker",  type: "weapon", name: "標的レーザー", desc: () => `敵に標的マーク。全武器のダメージ+${MARK.vuln * 100}%、倒すとスコア×${MARK.score}`, up: "マークの数・間隔アップ" },
   // ---- 強化(4枠) ----
   { id: "power",   type: "passive", name: "火力強化", desc: () => `全武器のダメージ +${PASSIVE.power * 100}%` },
-  { id: "rate",    type: "passive", name: "連射機構", desc: () => `主砲の発射間隔 -${Math.round((1 - PASSIVE.rate) * 100)}%` },
+  { id: "rate",    type: "passive", name: "過給機",   desc: () => `主砲の発射間隔 -${Math.round((1 - PASSIVE.rate) * 100)}%。熱量が高いほどさらに速い。ただし被弾で熱量が多く下がる` },
   { id: "spread",  type: "passive", name: "拡散砲身", desc: () => "主砲の弾 +1(扇状に広がる)" },
   { id: "pierce",  type: "passive", name: "貫通弾芯", desc: () => "主砲の弾が敵を +1体 貫通" },
   { id: "caliber", type: "passive", name: "大口径弾", desc: () => `主砲の弾が大きくなり威力 +${PASSIVE.caliberDmg * 100}%、弾速 -${PASSIVE.caliberSpeed * 100}%` },
   { id: "boom",    type: "passive", name: "爆裂弾頭", desc: () => "主砲の弾が命中時に爆発(Lvで範囲拡大)" },
   { id: "bounce",  type: "passive", name: "跳弾",     desc: () => "主砲の弾が画面端や地面で +1回 跳ね返る" },
   { id: "armor",   type: "passive", name: "装甲板",   desc: () => `最大HP +${PASSIVE.armorHp}、受けるダメージ -${PASSIVE.armorCut * 100}%` },
-  { id: "regen",   type: "passive", name: "自己修復", desc: () => `毎秒 HP +${PASSIVE.regen} 回復` },
-  { id: "learn",   type: "passive", name: "学習回路", desc: () => `獲得経験値 +${PASSIVE.learn * 100}%` },
   // ---- 補充(上限なし。候補が足りないときやHPが減ったときに出る) ----
   { id: "heal",    type: "filler", name: "緊急修理", desc: () => "HPを30%回復" },
   { id: "bombup",  type: "filler", name: "ボム補充", desc: () => "ボムのストック +1" },   // 今は候補に出さない(ボムは最初の1個とドロップだけ)
