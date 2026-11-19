@@ -296,6 +296,32 @@ const sound = {
     g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     o.connect(g).connect(this.ac.destination); o.start(t); o.stop(t + dur);
   },
+  // 大巨兵の咆哮: 低いうなり(2本のノコギリ波を揺らしながら下げる)と、ざらついた息(ノイズ)を重ねる
+  roar(vol = 0.16, dur = 1.8) {
+    if (this.muted || !this.ac) return;
+    const ac = this.ac, t = ac.currentTime;
+    const out = ac.createGain();
+    out.gain.setValueAtTime(0.0001, t);
+    out.gain.exponentialRampToValueAtTime(vol, t + 0.12);             // 立ち上がり
+    out.gain.setValueAtTime(vol, t + dur * 0.45);
+    out.gain.exponentialRampToValueAtTime(0.0001, t + dur);           // 消えていく
+    const lp = ac.createBiquadFilter(); lp.type = "lowpass";
+    lp.frequency.setValueAtTime(900, t); lp.frequency.exponentialRampToValueAtTime(250, t + dur);
+    lp.connect(out).connect(ac.destination);
+    const lfo = ac.createOscillator(), lfoG = ac.createGain();       // うなりの震え
+    lfo.frequency.value = 9; lfoG.gain.value = 6; lfo.connect(lfoG);
+    for (const [f0, f1, g0] of [[95, 48, 0.6], [142, 70, 0.35]]) {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = "sawtooth"; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+      lfoG.connect(o.frequency); g.gain.value = g0;
+      o.connect(g).connect(lp); o.start(t); o.stop(t + dur);
+    }
+    const n = ac.createBufferSource(), buf = ac.createBuffer(1, Math.floor(ac.sampleRate * dur), ac.sampleRate);
+    const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    const ng = ac.createGain(); ng.gain.value = 0.25; n.buffer = buf;
+    n.connect(ng).connect(lp); n.start(t); n.stop(t + dur);
+    lfo.start(t); lfo.stop(t + dur);
+  },
 };
 // ---- BGM: 状態に合わせて曲を選び、音量をゆっくり変えて切り替える ----
 const bgm = {
@@ -315,7 +341,8 @@ const bgm = {
   },
   want() {   // 今鳴らすべき曲
     if (state === "title" || state === "over" || state === "clear" || !S) return null;
-    return S.finalSpawned ? "boss" : "main";
+    if (S.finalSpawned) return S.time >= S.finalAt + BGM.bossDelay ? "boss" : null;   // 咆哮のあと少し間を空けてボス曲
+    return S.time >= FINAL.bossAt - BGM.stopBefore ? null : "main";                  // 大巨兵の少し前から静かに
   },
   update(dt) {
     if (!BGM.enable || !this.unlocked) return;
@@ -350,6 +377,7 @@ const sfx = {
   boom: throttled("boom", () => sound.play(100, 0.2, "sawtooth", 0.04, -60)),
   zap: () => sound.play(1500, 0.08, "square", 0.025, -1200),
   nova: () => sound.play(200, 0.35, "sine", 0.07, -150),
+  roar: () => sound.roar(),
 };
 
 // ============================================================
@@ -521,7 +549,8 @@ function update(dt) {
   }
   // --- 最終ボス ---
   if (!S.finalSpawned && S.time >= FINAL.bossAt) {
-    S.finalSpawned = true; spawnEnemy("titan", null, TIERS.length - 1); banner("最終決戦 ― 大巨兵 襲来!", "#ff1744"); shake = 10;
+    S.finalSpawned = true; S.finalAt = S.time; spawnEnemy("titan", null, TIERS.length - 1); banner("最終決戦 ― 大巨兵 襲来!", "#ff1744"); shake = 10;
+    sfx.roar();
     if (FINAL.roar) titanRoar();
   }
 
@@ -859,7 +888,7 @@ function titanRoar() {
   }
   S.calm = FINAL.calmSec;
   fx.push({ type: "flash", life: 0.2, max: 0.2 });
-  sfx.bomb(); shake = 16;
+  shake = 16;
 }
 // 大巨兵の絵に重なっているか(重なった敵は半透明で描く)
 function overTitan(e, t) {

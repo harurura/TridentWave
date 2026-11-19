@@ -76,9 +76,12 @@ const BGM = {
   enable: true,                       // false にするとBGMを鳴らさない
   main: "assets/bgm_main.mp3",        // 通常の戦闘曲(0:00〜大巨兵まで)
   boss: "assets/bgm_boss.mp3",        // 大巨兵戦の曲
-  volume: 0.35,                       // 音量(0〜1)。効果音より少し小さめ
+  volume: 0.1,                       // 音量(0〜1)。効果音より少し小さめ
   pauseVolume: 0.3,                   // ポーズ中・レベルアップ画面の音量(通常の何倍か)
   fadeSec: 1.5,                       // 曲の切り替え・止めるときにかける時間(秒)
+  // 大巨兵の登場: 少し前に main を止めて静かにし、咆哮のあと少ししてから boss を流す
+  stopBefore: 4,                      // 大巨兵が来る何秒前に main を止め始めるか(fadeSec より長くする)
+  bossDelay: 2.5,                     // 咆哮から boss が流れ始めるまでの秒数
 };
 
 // ---- シールド(アイテム S) ----
