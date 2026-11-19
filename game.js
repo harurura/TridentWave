@@ -1025,9 +1025,9 @@ function killEnemy(e) {
   S.kills++;
   if (!tut || tut.heatOn) {   // スコア(熱量が倍率)と熱量の上昇(チュートリアルでは熱量の手順だけ)
     let pts = e.d.xp * e.T.score * SCORE.perXp;
-    if (e.type === "boss") pts += SCORE.bossBonus; else if (e.type === "titan") pts += SCORE.titanBonus;
     const marked = e.mark > 0, bounty = S.evolved.marker;
-    if (marked) pts *= bounty ? EVOLVE.bounty.score : MARK.score;   // 標的マーク: スコアが増える
+    if (marked) pts *= bounty ? EVOLVE.bounty.score : MARK.score;   // 標的マーク: スコアが増える(ボスの撃破ボーナスには掛けない)
+    if (e.type === "boss") pts += SCORE.bossBonus; else if (e.type === "titan") pts += SCORE.titanBonus;
     pts = Math.round(pts * S.heat / 10) * 10;
     S.score += pts;
     if (e.d.boss) floatText(e.x, e.y - e.r - 20, `+${pts.toLocaleString()}`, "#f0e442");

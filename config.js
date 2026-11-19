@@ -210,7 +210,7 @@ const ENEMY = {
   spitter: { name: "砲撃手",   hp: 3,   speed: 40,  r: 15, color: "#66bb6a", dmg: 0,  xp: 4,   kind: "hover",  from: 90 },
   boss:    { name: "巨兵",     hp: 60,  speed: 16,  r: 40, color: "#d84315", dmg: 30, xp: 30,  kind: "ground", from: 99999, boss: true },
   dummy:   { name: "的",       hp: 3,   speed: 0,   r: 18, color: "#90a4ae", dmg: 0,  xp: 1,   kind: "dummy",  from: 99999 },  // チュートリアル用
-  titan:   { name: "大巨兵",   hp: 250, speed: 10,  r: 60, color: "#b71c1c", dmg: 25, xp: 100, kind: "ground", from: 99999, boss: true },
+  titan:   { name: "大巨兵",   hp: 320, speed: 10,  r: 60, color: "#b71c1c", dmg: 25, xp: 100, kind: "ground", from: 99999, boss: true },
 };
 const SPAWN_WEIGHT = { grunt: 10, runner: 5, bat: 5, diver: 6, brute: 2, spitter: 1.5 };
 
@@ -348,7 +348,7 @@ const HEAT = {
 const SCORE = {
   perXp: 100,               // 経験値1あたりの点数
   bossBonus: 2000,          // 巨兵を倒したときの追加点(×熱量)
-  titanBonus: 10000,        // 大巨兵を倒したときの追加点(×熱量)
+  titanBonus: 150000,       // 大巨兵を倒したときの追加点(×熱量)。熱量×3なら45万点、×6なら90万点(標的マークの倍率は掛からない)
   clearBonus: 5000,         // クリアしたときの追加点
   hpBonus: 50,              // クリア時に残ったHP 1あたりの追加点
   noBombBonus: 200000,      // ボムを1回も使わずにクリアしたときの追加点(× 最高熱量)。熱量×3なら60万点、×6なら120万点
