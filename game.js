@@ -703,7 +703,7 @@ function updateWeapons(dt) {
         ts.forEach((t, i) => {
           const o = flakBarrel(i);
           fireBullet(o.x, o.y, Math.atan2(t.y - o.y, t.x - o.x),
-            { kind: "flak", speed: 480, dmg: Wp.dmg(L) * S.dmgMul, r: 6, color: "#18ffff", life: 1.6, extra: { radius: Wp.radius(L) * E.radiusMul, pops: E.pops } });
+            { kind: "flak", speed: 480, dmg: Wp.dmg(L) * S.dmgMul * E.dmgMul, r: 6, color: "#18ffff", life: 1.6, extra: { radius: Wp.radius(L) * E.radiusMul, pops: E.pops } });
         });
         fired = ts.length > 0;
       }
@@ -740,9 +740,9 @@ function updateWeapons(dt) {
         let cur = nearestEnemy(P, e => !hit.has(e), storm ? E.reach : 400);
         if (!cur) break;
         const pts = [{ x: AIM.x, y: AIM.y }];
-        for (let i = 0; i < Wp.chain(L) && cur; i++) {
+        for (let i = 0; i < Wp.chain(L) + (storm ? E.chainBonus : 0) && cur; i++) {
           hit.add(cur); pts.push({ x: cur.x, y: cur.y });
-          damageEnemy(cur, Wp.dmg(L) * S.dmgMul);
+          damageEnemy(cur, Wp.dmg(L) * S.dmgMul * (storm ? E.dmgMul : 1));
           const from = cur;
           cur = nearestEnemy(from, e => !hit.has(e), storm ? E.jump : 170);
         }
@@ -753,7 +753,8 @@ function updateWeapons(dt) {
     } else if (id === "nova") {
       if (nearestEnemy(P, null, novaRadius())) { novaBlast(1, 1); fired = true; }
     }
-    S.wcool[id] = fired ? Wp.interval(L) * (id === "ground" && S.evolved.ground ? EVOLVE.heavy.intervalMul : 1) : 0.15;
+    const evoInt = !S.evolved[id] ? 1 : id === "ground" ? EVOLVE.heavy.intervalMul : id === "flak" ? EVOLVE.aaBattery.intervalMul : id === "thunder" ? EVOLVE.storm.intervalMul : 1;
+    S.wcool[id] = fired ? Wp.interval(L) * evoInt : 0.15;
   }
 }
 
@@ -840,7 +841,7 @@ function updateBullets(dt) {
       if (b.kind === "bomblet") { explode(b.x, b.y, b.radius, b.dmg, null, "#ffab40"); b.life = 0; break; }
       if (b.kind === "missile") { damageEnemy(e, b.dmg); explode(b.x, b.y, 28, b.dmg * 0.4, e, "#ff8a65"); if (b.cluster) clusterBurst(b); b.life = 0; break; }
       damageEnemy(e, b.dmg);
-      if (b.kind === "ground") { if (b.blast) explode(b.x, b.y, b.blast, b.dmg * 0.6, e, "#ff9100"); knockback(e, P.x, P.y, b.knock); b.life = 0; break; }
+      if (b.kind === "ground") { if (b.blast) explode(b.x, b.y, b.blast, b.dmg * EVOLVE.heavy.blastDmg, e, "#ff9100"); knockback(e, P.x, P.y, b.knock); b.life = 0; break; }
       if (b.boom) explode(b.x, b.y, 30 + b.boom * 14, b.dmg * 0.6, e, "#ffb74d");
       if (b.pierce > 0) b.pierce--; else b.life = 0;
     }
@@ -858,7 +859,7 @@ function updateEnemies(dt) {
     if (e.hp <= 0) continue;
     e.t += dt; e.age += dt; e.flash = Math.max(0, e.flash - dt);
     const inField = slowL && dist(e, P) < slowR + e.r;
-    e.spdMul = inField ? 1 - slowF * slowEffect(e) : 1;
+    e.spdMul = inField ? 1 - slowF * (grav && !G.resist ? 1 : slowEffect(e)) : 1;   // 重力場は効きにくさを掛けない(元の強さ)
     if (inField && gravHit) { damageEnemy(e, G.dps * G.tick * S.dmgMul); if (e.hp <= 0) continue; }
     const sp = e.speed * e.spdMul;
     const k = e.d.kind;

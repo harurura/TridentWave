@@ -107,7 +107,7 @@ const WEAPON = {
   flak:    { interval: L => 1.5 - 0.12 * L, dmg: L => 1.2 + 0.5 * L, radius: L => 40 + 10 * L },
   mine:    { interval: L => 3.2 - 0.3 * L, dmg: L => 4 + 2 * L, max: L => 2 + L, radius: L => 50 + 6 * L },
   missile: { interval: L => 2.4 - 0.2 * L, dmg: L => 3 + 1.5 * L, count: L => 1 + Math.floor(L / 2) },
-  thunder: { interval: L => 1.6 - 0.15 * L, dmg: L => 1.5 + 0.6 * L, chain: L => 2 + L },
+  thunder: { interval: L => 1.8 - 0.15 * L, dmg: L => 1.2 + 0.5 * L, chain: L => 1 + L },   // Lv5で 1.05秒ごと・威力3.7・6体まで連鎖
   nova:    { interval: L => 5 - 0.5 * L, dmg: L => 2 + L, radius: L => 110 + 20 * L, knock: L => 60 + 15 * L },
   slow:    { radius: L => 120 + 20 * L, factor: L => Math.min(0.45, 0.2 + 0.05 * L) },   // Lv5で 半径220・45%減速
 };
@@ -128,14 +128,14 @@ const PASSIVE = {
 // ---- 進化(武装Lv5 + 対応する強化Lv5 で、レベルアップ時に候補に出る) ----
 const EVOLVE = {
   cluster:   { bomblets: 6, bombletDmg: 0.5, bombletRadius: 38 },   // クラスターミサイル: 子爆弾の数・威力(ミサイル比)・爆発範囲
-  aaBattery: { barrels: 3, pops: 3, radiusMul: 1.2 },               // 高射砲陣地: 砲身の数・1発が爆発する回数・炸裂範囲の倍率
-  heavy:     { dmgMul: 2.5, blastRadius: 55, knockMul: 1.5, intervalMul: 1.2 },  // 重砲台: 威力倍率・着弾爆発の範囲・押し戻し倍率・発射間隔倍率
+  aaBattery: { barrels: 3, pops: 4, radiusMul: 1.5, dmgMul: 1.6, intervalMul: 0.75 },   // 高射砲陣地: 砲身の数・1発が爆発する回数・炸裂範囲の倍率・威力倍率・発射間隔倍率
+  heavy:     { dmgMul: 3.5, blastRadius: 80, blastDmg: 1.0, knockMul: 2.0, intervalMul: 0.9 },  // 重砲台: 威力倍率・着弾爆発の範囲・爆発の威力(弾比)・押し戻し倍率・発射間隔倍率
   leapMine:  { extraMax: 2, radiusMul: 1.3, airHeight: 150, airReach: 260 },   // 跳躍地雷: 設置数の追加・爆発範囲の倍率・跳び上がって爆発する高さ・反応する上空の高さ
-  storm:     { bolts: 3, reach: 520, jump: 220 },                              // 雷嵐: 同時に落とす雷の数・最初に狙える距離・連鎖が飛ぶ距離
+  storm:     { bolts: 3, reach: 520, jump: 220, chainBonus: 1, dmgMul: 1.2, intervalMul: 0.85 },  // 雷嵐: 雷の数・最初に狙える距離・連鎖が飛ぶ距離・連鎖数の追加・威力倍率・発射間隔倍率(雷撃を弱めた分を取り戻す)
   counter:   { radiusMul: 1.25, counterDmgMul: 2, counterKnockMul: 1.5 },      // 反撃衝撃波: 範囲の倍率・被弾したときに出る衝撃波の威力倍率・押し戻し倍率
-  gravity:   { dps: 3, tick: 0.5, slow: 0.55, radiusMul: 1.0 },               // 重力場: 中の敵への秒間ダメージ(火力強化が掛かる)・ダメージの間隔(秒)・減速率・範囲の倍率
+  gravity:   { dps: 5, tick: 0.5, slow: 0.75, radiusMul: 1.15, resist: false },  // 重力場: 中の敵への秒間ダメージ(火力強化が掛かる)・ダメージの間隔(秒)・減速率・範囲の倍率・下の「効きにくさ」を掛けるか
 };
-// ---- 減速の効きにくさ(減速フィールド・重力場の両方に掛かる) ----
+// ---- 減速の効きにくさ(減速フィールドに掛かる。重力場は gravity.resist が true のときだけ) ----
 const SLOW_RESIST = {
   perHeat: 0.08,            // 熱量が1上がるごとに、減速の効き目がこれだけ弱まる(×6.0で効き目6割)
   boss: 0.3,                // 巨兵・大巨兵に効く割合
