@@ -410,7 +410,7 @@ function startGame(withTutorial) {
     cards: {}, wcool: {}, evolved: {}, bombs: BOMB.start,
     fireCool: 0, shield: 0, invuln: 0, hurtFlash: 0, aimAngle: -Math.PI / 2,
     tierShown: 0, bossDone: {}, finalSpawned: false, finalKilled: false, banner: null,
-    score: 0, heat: HEAT.min, maxHeat: HEAT.min, clearBonus: null,
+    score: 0, heat: HEAT.min, maxHeat: HEAT.min, clearBonus: null, bombsUsed: 0,
   };
   recalc();
   S.hp = S.maxHp;
@@ -549,8 +549,9 @@ function update(dt) {
   // --- クリア判定 ---
   if (S.time >= FINAL.clearAt) {
     const hpB = Math.ceil(Math.max(0, S.hp)) * SCORE.hpBonus;
-    S.clearBonus = { clear: SCORE.clearBonus, hp: hpB };
-    S.score += SCORE.clearBonus + hpB;
+    const nbB = S.bombsUsed === 0 ? Math.round(SCORE.noBombBonus * S.maxHeat / 10) * 10 : 0;   // ノーボムボーナス
+    S.clearBonus = { clear: SCORE.clearBonus, hp: hpB, noBomb: nbB };
+    S.score += SCORE.clearBonus + hpB + nbB;
     finishRun(true); sfx.lvl(); return;
   }
   if (!tut) updateHeat(dt);
@@ -1015,7 +1016,7 @@ function hitPlayer(e) {
 function useBomb() {
   if (S.bombs <= 0) return;
   S.bombs--;
-  if (tut) tut.bombUsed = true;
+  if (tut) tut.bombUsed = true; else S.bombsUsed++;   // チュートリアルで使った分は数えない
   sfx.bomb(); shake = 14;
   fx.push({ type: "flash", life: 0.25, max: 0.25 });
   const dmg = BOMB.dmgPerTierHp * TIERS[currentTier()].hp;
@@ -1262,7 +1263,7 @@ function buildList() {   // 持っているカード(武装→強化の順)
 function finishRun(cleared) {
   state = cleared ? "clear" : "over";
   const entry = { name: "", score: S.score, time: Math.min(S.time, FINAL.clearAt), clear: cleared, titan: S.finalKilled,
-                  heat: S.maxHeat, lv: S.level, kills: S.kills, build: buildList(), date: Date.now() };
+                  heat: S.maxHeat, lv: S.level, kills: S.kills, bombs: S.bombsUsed, build: buildList(), date: Date.now() };
   const list = loadRanking();
   const rank = list.filter(r => r.score >= entry.score).length;   // 同点は先に登録した人が上
   const ranked = entry.score > 0 && rank < RANKING.size;
@@ -1327,18 +1328,24 @@ function drawResult() {
   if (R.rank >= 0) { ctx.fillStyle = "#ffd740"; ctx.fillText(`ランキング ${R.rank + 1}位!`, lx + lw - 16, ly + 52); }
   else { ctx.fillStyle = "#78909c"; ctx.fillText("ランキング外", lx + lw - 16, ly + 52); }
   ctx.textAlign = "left"; ctx.font = "12px sans-serif"; ctx.fillStyle = "#b0bec5";
-  if (cleared && S.clearBonus) ctx.fillText(`(クリアボーナス +${S.clearBonus.clear.toLocaleString()} ・ 残りHP +${S.clearBonus.hp.toLocaleString()} を含む)`, lx + 16, ly + 76);
+  if (cleared && S.clearBonus) {
+    const B = S.clearBonus;
+    ctx.fillText(`(クリア +${B.clear.toLocaleString()} ・ 残りHP +${B.hp.toLocaleString()}${B.noBomb ? "" : " を含む)"}`, lx + 16, ly + 76);
+    if (B.noBomb) { const w = ctx.measureText(`(クリア +${B.clear.toLocaleString()} ・ 残りHP +${B.hp.toLocaleString()}`).width;
+      ctx.fillStyle = "#ffd740"; ctx.font = "bold 12px sans-serif"; ctx.fillText(` ・ ノーボム +${B.noBomb.toLocaleString()} を含む)`, lx + 16 + w, ly + 76); }
+  }
   const stats = [
     ["生存", cleared ? `${clearMinutes()}分間 生き残った!` : `${fmtTime(E.time)} / ${fmtTime(FINAL.clearAt)}`],
     ["最高熱量", `×${E.heat.toFixed(1)}`],
     ["レベル", `Lv ${E.lv}`],
     ["撃破", `${E.kills.toLocaleString()} 体`],
     ["大巨兵", E.titan ? "撃破!" : S.finalSpawned ? "撃破ならず" : "未到達"],
+    ["ボム", E.bombs === 0 ? "0回 ノーボム!" : `${E.bombs}回`],
   ];
   stats.forEach(([k, v], i) => {
     const x = lx + 16 + (i % 2) * 216, y = ly + 104 + Math.floor(i / 2) * 24;
     ctx.fillStyle = "#78909c"; ctx.font = "13px sans-serif"; ctx.fillText(k, x, y);
-    ctx.fillStyle = k === "大巨兵" && E.titan ? "#ffd740" : "#eceff1"; ctx.font = "bold 14px sans-serif"; ctx.fillText(v, x + 66, y);
+    ctx.fillStyle = (k === "大巨兵" && E.titan) || (k === "ボム" && E.bombs === 0) ? "#ffd740" : "#eceff1"; ctx.font = "bold 14px sans-serif"; ctx.fillText(v, x + 66, y);
   });
   drawBuildCards(lx + 16, ly + 182, lw - 32, E.build);
 
@@ -1806,6 +1813,7 @@ function drawBombStock() {
   const cx = P.x, cy = GY + 26, gap = 30, x0 = cx - ((BOMB.max - 1) * gap) / 2;
   ctx.textAlign = "right"; ctx.font = "bold 14px sans-serif"; ctx.fillStyle = "#f0e442";
   ctx.fillText("ボム", x0 - 18, cy + 5);
+  if (!tut && S.bombsUsed === 0) { ctx.font = "bold 11px sans-serif"; ctx.fillStyle = "#ffd740"; ctx.fillText("ノーボム継続中", x0 - 18, cy - 12); }   // ノーボムボーナスの対象
   for (let i = 0; i < BOMB.max; i++) {
     const x = x0 + i * gap, have = i < S.bombs, r = 9 + (have && bombPulse > 0 ? bombPulse * 4 : 0);
     ctx.beginPath(); ctx.arc(x, cy, r, 0, Math.PI * 2);
