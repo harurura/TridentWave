@@ -739,6 +739,12 @@ function updateWeapons(dt) {
   }
 }
 
+// 減速の効き目(0〜1): 熱量が高いほど、大きい敵ほど効きにくい
+function slowEffect(e) {
+  const heat = tut ? 1 : Math.max(0, 1 - (S.heat - HEAT.min) * SLOW_RESIST.perHeat);
+  const size = e.d.boss ? SLOW_RESIST.boss : e.type === "brute" ? SLOW_RESIST.brute : 1;
+  return heat * size;
+}
 function slowRadius() { const L = lv("slow"); return L ? WEAPON.slow.radius(L) * (S.evolved.slow ? EVOLVE.gravity.radiusMul : 1) : 0; }
 
 // 衝撃波: 周りの敵にダメージを与えて吹き飛ばし、敵弾を消す(反撃衝撃波では範囲が広く、被弾時にも強いものが出る)
@@ -834,7 +840,7 @@ function updateEnemies(dt) {
     if (e.hp <= 0) continue;
     e.t += dt; e.age += dt; e.flash = Math.max(0, e.flash - dt);
     const inField = slowL && dist(e, P) < slowR + e.r;
-    e.spdMul = inField ? 1 - slowF : 1;
+    e.spdMul = inField ? 1 - slowF * slowEffect(e) : 1;
     if (inField && gravHit) { damageEnemy(e, G.dps * G.tick * S.dmgMul); if (e.hp <= 0) continue; }
     const sp = e.speed * e.spdMul;
     const k = e.d.kind;

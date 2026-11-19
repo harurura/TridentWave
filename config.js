@@ -102,7 +102,7 @@ const WEAPON = {
   missile: { interval: L => 2.4 - 0.2 * L, dmg: L => 3 + 1.5 * L, count: L => 1 + Math.floor(L / 2) },
   thunder: { interval: L => 1.6 - 0.15 * L, dmg: L => 1.5 + 0.6 * L, chain: L => 2 + L },
   nova:    { interval: L => 5 - 0.5 * L, dmg: L => 2 + L, radius: L => 110 + 20 * L, knock: L => 60 + 15 * L },
-  slow:    { radius: L => 130 + 25 * L, factor: L => Math.min(0.65, 0.25 + 0.08 * L) },
+  slow:    { radius: L => 120 + 20 * L, factor: L => Math.min(0.45, 0.2 + 0.05 * L) },   // Lv5で 半径220・45%減速
 };
 
 // ---- 強化の効果(1Lvごと) ----
@@ -126,7 +126,13 @@ const EVOLVE = {
   leapMine:  { extraMax: 2, radiusMul: 1.3, airHeight: 150, airReach: 260 },   // 跳躍地雷: 設置数の追加・爆発範囲の倍率・跳び上がって爆発する高さ・反応する上空の高さ
   storm:     { bolts: 3, reach: 520, jump: 220 },                              // 雷嵐: 同時に落とす雷の数・最初に狙える距離・連鎖が飛ぶ距離
   counter:   { radiusMul: 1.25, counterDmgMul: 2, counterKnockMul: 1.5 },      // 反撃衝撃波: 範囲の倍率・被弾したときに出る衝撃波の威力倍率・押し戻し倍率
-  gravity:   { dps: 5, tick: 0.5, slow: 0.75, radiusMul: 1.15 },              // 重力場: 中の敵への秒間ダメージ(火力強化が掛かる)・ダメージの間隔(秒)・減速率・範囲の倍率
+  gravity:   { dps: 3, tick: 0.5, slow: 0.55, radiusMul: 1.0 },               // 重力場: 中の敵への秒間ダメージ(火力強化が掛かる)・ダメージの間隔(秒)・減速率・範囲の倍率
+};
+// ---- 減速の効きにくさ(減速フィールド・重力場の両方に掛かる) ----
+const SLOW_RESIST = {
+  perHeat: 0.08,            // 熱量が1上がるごとに、減速の効き目がこれだけ弱まる(×6.0で効き目6割)
+  boss: 0.3,                // 巨兵・大巨兵に効く割合
+  brute: 0.6,               // 重装兵に効く割合
 };
 const EVOLUTIONS = [
   { id: "cluster",   from: "missile", with: "boom",    name: "クラスターミサイル", desc: "着弾すると子爆弾をばらまき、周りを巻き込む" },
@@ -298,9 +304,9 @@ const BG_ROOM = {
 // (出てくる敵をすべて素早く倒し続けると、1秒あたり gainPerSec × fastBonus 上がる)
 const HEAT = {
   min: 1.0, max: 6.0,       // 熱量の範囲
-  gainPerSec: 0.02,         // 出てくる敵をすべて倒し続けたときに、1秒あたり上がる量
+  gainPerSec: 0.01,         // 出てくる敵をすべて倒し続けたときに、1秒あたり上がる量
   fastKillTime: 4,          // 出現からこの秒数以内に倒すと「素早い撃破」
-  fastBonus: 1.5,           // 素早い撃破では上がる量がこの倍(すべて素早く倒し続けると、×1.0→×6.0 までおよそ3分)
+  fastBonus: 1.5,           // 素早い撃破では上がる量がこの倍(すべて素早く倒し続けると、×6.0 に届くのは7:00ごろ)
   decayPerSec: 0.003,       // 何もしなくても少しずつ下がる量(1秒あたり)
   hurtDrop: 2.0,            // 被弾したときに下がる量
   crowdRadius: 170,         // 自機からこの距離以内に…
