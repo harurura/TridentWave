@@ -363,6 +363,50 @@ const EVO_OF = Object.fromEntries(EVOLUTIONS.map(v => [v.from, v]));
 const CARD = Object.fromEntries(CARDS.map(c => [c.id, c]));
 const TYPE_LABEL = { weapon: "武装", passive: "強化", filler: "補充", evolve: "★進化" };
 const TYPE_COLOR = { weapon: "#ffb74d", passive: "#90caf9", filler: "#a5d6a7", evolve: "#ffd740" };
+// ---- 紙のUI(カード選択・結果画面・ヒント類の共通の見た目) ----
+const UI_FONT = '"Hiragino Maru Gothic ProN", "Zen Maru Gothic", "Yu Gothic UI", "Meiryo", sans-serif';   // 丸ゴシックがあれば使う
+const PAPER_UI = {
+  ink: "#4a2e1a", sub: "#7a5a40", line: "#5a3a22",
+  paper: "#fff6e0", paperHover: "#fffbef", evoPaper: "#fff1b8",
+  tag: { weapon: "#e8892b", passive: "#4a8fd6", filler: "#5aa95a", evolve: "#d9a400" },
+  tilt: [-2.2, 1.2, -1.0],   // カードの傾き(度)
+  tape: ["rgba(255,213,128,0.75)", "rgba(168,214,240,0.75)", "rgba(255,180,190,0.75)"],
+  pop: 0.32, popStep: 0.07,  // 出てくる速さ(秒)と、1枚ごとの遅れ
+};
+let lvlOpen = 0, uiBg = null, uiBgState = "";
+function uiFont(size, weight = "bold") { ctx.font = `${weight} ${size}px ${UI_FONT}`; }
+function fitUiFont(text, maxW, size, weight = "bold") { do uiFont(size, weight); while (ctx.measureText(text).width > maxW && --size > 8); }
+function roundRectPath(x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+function uiBackdrop(dim = 0.55) {   // その画面に入った瞬間の絵をぼかし、暖かい色で暗くして固定する(画面ごとに1回だけ作る)
+  if (uiBgState !== state || !uiBg) {
+    uiBg = uiBg || newCanvas(); const g = uiBg.getContext("2d");
+    g.clearRect(0, 0, W, H);
+    if ("filter" in g) g.filter = "blur(3px)";
+    g.drawImage(cv, 0, 0, W, H); g.filter = "none";
+    g.fillStyle = `rgba(40,22,10,${dim})`; g.fillRect(0, 0, W, H);
+    uiBgState = state;
+  }
+  ctx.drawImage(uiBg, 0, 0);
+}
+function outlinedText(text, x, y, fill, width = 8) {   // 茶色のフチ付き文字(見出し用)
+  ctx.lineJoin = "round"; ctx.lineWidth = width; ctx.strokeStyle = PAPER_UI.line; ctx.strokeText(text, x, y);
+  ctx.fillStyle = fill; ctx.fillText(text, x, y);
+}
+function paperPanel(x, y, w, h, title) {   // 紙のパネル(影・クリーム色・茶色のフチ・見出し)
+  const U = PAPER_UI;
+  ctx.fillStyle = "rgba(20,10,0,0.32)"; roundRectPath(x + 4, y + 6, w, h, 10); ctx.fill();
+  ctx.fillStyle = U.paper; roundRectPath(x, y, w, h, 10); ctx.fill();
+  ctx.lineWidth = 3.5; ctx.strokeStyle = U.line; ctx.stroke();
+  if (!title) return;
+  uiFont(15); ctx.textAlign = "left";
+  const tw = ctx.measureText(title).width;
+  ctx.fillStyle = "rgba(255,213,64,0.55)"; ctx.fillRect(x + 12, y + 18, tw + 8, 10);   // 蛍光ペンの線
+  ctx.fillStyle = U.ink; ctx.fillText(title, x + 16, y + 26);
+}
+
 
 // ---- ゲームの長さ(MODE)を時間の設定に反映 ----
 const MODE = (() => { try { const m = new URLSearchParams(location.search).get("mode"); if (MODES[m]) return m; } catch (e) {} return MODE_DEFAULT; })();
@@ -1268,7 +1312,7 @@ function openLevelUp() {
   }
   if (!pick.length) { state = "play"; return; }
   choices = pick;
-  state = "levelup"; sfx.lvl();
+  state = "levelup"; sfx.lvl(); lvlOpen = performance.now();
 }
 
 // 進化の組み合わせを初めて両方持ったとき、その場でヒントを出す(1つの組み合わせにつき1回)
@@ -1279,13 +1323,16 @@ function evolveHint() {
   S.evoHinted[v.id] = true;
   S.tip = { text: `★ ${CARD[v.from].name} + ${CARD[v.with].name} → 両方Lv5で「${v.name}」に進化!`, life: 5 };
 }
-function drawTip() {   // その場のヒント(画面上の帯)
+function drawTip() {   // その場のヒント(テープで貼った紙の帯)
   const t = S.tip; if (!t || t.life <= 0) return;
   const y = tut ? 202 : 150;   // チュートリアル中は説明の枠の下に出す
+  const U = PAPER_UI, x = W / 2 - 300, w = 600, h = 30;
   ctx.globalAlpha = Math.min(1, t.life, (5 - t.life) * 4);
-  ctx.fillStyle = "rgba(40,30,0,0.75)"; ctx.fillRect(W / 2 - 300, y, 600, 30);
-  ctx.strokeStyle = "#ffd740"; ctx.lineWidth = 1.5; ctx.strokeRect(W / 2 - 300, y, 600, 30);
-  ctx.textAlign = "center"; ctx.fillStyle = "#ffd740"; fitFont(t.text, 580, 15); ctx.fillText(t.text, W / 2, y + 20);
+  ctx.fillStyle = "rgba(20,10,0,0.3)"; roundRectPath(x + 3, y + 4, w, h, 6); ctx.fill();
+  ctx.fillStyle = "#fff3c4"; roundRectPath(x, y, w, h, 6); ctx.fill();
+  ctx.lineWidth = 2.5; ctx.strokeStyle = U.line; ctx.stroke();
+  ctx.fillStyle = U.tape[0]; for (const tx of [x - 8, x + w - 24]) ctx.fillRect(tx, y - 4, 32, 12);   // 両はしのテープ
+  ctx.textAlign = "center"; ctx.fillStyle = U.ink; fitUiFont(t.text, 570, 15); ctx.fillText(t.text, W / 2, y + 21);
   ctx.globalAlpha = 1; ctx.textAlign = "left";
 }
 
@@ -1380,18 +1427,21 @@ function finishTutorial(skipped) {
   banner(`本番スタート! ${clearMinutes()}分間 生き残れ`, "#90caf9");
 }
 
-function drawTutorial() {
+function drawTutorial() {   // チュートリアルの説明(紙のメモ)
   const st = TUTORIAL[tut.step]; if (!st) return;
-  const w = 620, x = W / 2 - w / 2, y = 120, h = 74;
-  ctx.fillStyle = "rgba(10,16,36,0.88)"; ctx.fillRect(x, y, w, h);
-  ctx.strokeStyle = st.done() ? "#69f0ae" : "#90caf9"; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h);
-  ctx.textAlign = "left"; ctx.fillStyle = "#90caf9"; ctx.font = "bold 13px sans-serif";
-  ctx.fillText(`チュートリアル ${tut.step + 1}/${TUTORIAL.length} ― ${st.title}`, x + 14, y + 22);
-  ctx.textAlign = "right"; ctx.fillStyle = "#90a4ae"; ctx.font = "12px sans-serif";
-  ctx.fillText("Esc: スキップして本番へ", x + w - 14, y + 22);
-  ctx.textAlign = "center"; ctx.font = "bold 16px sans-serif";
-  ctx.fillStyle = st.done() ? "#69f0ae" : "#fff";
-  wrapText(st.done() ? "OK!" : (typeof st.text === "function" ? st.text() : st.text), W / 2, y + 48, w - 30, 20);
+  const U = PAPER_UI, w = 620, x = W / 2 - w / 2, y = 120, h = 74, done = st.done();
+  ctx.fillStyle = "rgba(20,10,0,0.3)"; roundRectPath(x + 4, y + 5, w, h, 10); ctx.fill();
+  ctx.fillStyle = done ? "#eaf8e4" : U.paper; roundRectPath(x, y, w, h, 10); ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = done ? "#2e7d32" : U.line; ctx.stroke();
+  uiFont(12); const tag = `チュートリアル ${tut.step + 1}/${TUTORIAL.length}`, tw = ctx.measureText(tag).width + 16;
+  ctx.fillStyle = U.tag.passive; roundRectPath(x + 12, y + 9, tw, 20, 10); ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = U.line; ctx.stroke();
+  ctx.textAlign = "left"; ctx.fillStyle = "#fff"; ctx.fillText(tag, x + 20, y + 24);
+  uiFont(14); ctx.fillStyle = U.ink; ctx.fillText(st.title, x + 20 + tw, y + 24);
+  ctx.textAlign = "right"; ctx.fillStyle = U.sub; uiFont(12, "normal");
+  ctx.fillText("Esc: スキップして本番へ", x + w - 14, y + 24);
+  ctx.textAlign = "center"; uiFont(16);
+  ctx.fillStyle = done ? "#2e7d32" : U.ink;
+  wrapText(done ? "OK!" : (typeof st.text === "function" ? st.text() : st.text), W / 2, y + 52, w - 30, 20);
   ctx.textAlign = "left";
 }
 
@@ -1503,7 +1553,7 @@ function endAction(i) {   // 0 = もう一度(チュートリアルなし) / 1 =
 const nameInput = document.createElement("input");
 Object.assign(nameInput, { type: "text", maxLength: RANKING.nameMax, placeholder: RANKING.defaultName, autocomplete: "off" });
 Object.assign(nameInput.style, { position: "fixed", display: "none", zIndex: 10, boxSizing: "border-box", padding: "0 6px",
-  border: "2px solid #ffd740", borderRadius: "4px", background: "#fff8e1", color: "#1a1a1a", fontWeight: "bold", outline: "none" });
+  border: "2px solid #e8892b", borderRadius: "6px", background: "#fffdf3", color: "#4a2e1a", fontWeight: "bold", outline: "none", fontFamily: UI_FONT });
 document.body.appendChild(nameInput);
 function showNameInput() { nameInput.value = ""; nameInput.style.display = "block"; setTimeout(() => nameInput.focus(), 0); }
 function hideNameInput() { nameInput.style.display = "none"; nameInput.blur(); }
@@ -1522,33 +1572,28 @@ function endButtonAt(x, y) { for (let i = 0; i < 2; i++) { const b = endButtonRe
 function fitFont(text, maxW, size, weight = "bold") {   // 枠に収まるまで文字を小さくする
   do { ctx.font = `${weight} ${size}px sans-serif`; } while (ctx.measureText(text).width > maxW && --size > 8);
 }
-function panel(x, y, w, h, title) {
-  ctx.fillStyle = "rgba(20,26,50,0.92)"; ctx.fillRect(x, y, w, h);
-  ctx.strokeStyle = "#3a4570"; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h);
-  ctx.fillStyle = "#90caf9"; ctx.font = "bold 14px sans-serif"; ctx.textAlign = "left"; ctx.fillText(title, x + 14, y + 22);
-}
 
 function drawResult() {
-  const R = S.result, E = R.entry, cleared = state === "clear";
+  const R = S.result, E = R.entry, cleared = state === "clear", U = PAPER_UI;
+  const HL = "#c25e00", OK = "#2e7d32";   // 紙の上で目立たせる色(濃いオレンジ・緑)
   const hov = endButtonAt(mouse.x, mouse.y); if (hov >= 0) R.sel = hov;
-  ctx.fillStyle = "rgba(5,8,16,0.85)"; ctx.fillRect(0, 0, W, H);
-  ctx.textAlign = "center"; ctx.font = "bold 38px sans-serif"; ctx.fillStyle = cleared ? "#ffd740" : "#ff8a80";
-  ctx.fillText(cleared ? "CLEAR!" : "GAME OVER", W / 2, 50);
+  uiBackdrop(0.6);
+  ctx.textAlign = "center"; uiFont(40); outlinedText(cleared ? "CLEAR!" : "GAME OVER", W / 2, 52, cleared ? "#ffd740" : "#ff8a80");
 
   // ---- 左: 今回の結果とビルド ----
   const lx = 24, ly = 70, lw = 452;
-  panel(lx, ly, lw, 376, `今回の結果  (${MODES[MODE].label})`);
-  ctx.textAlign = "left"; ctx.fillStyle = "#b0bec5"; ctx.font = "13px sans-serif"; ctx.fillText("スコア", lx + 16, ly + 52);
-  ctx.fillStyle = "#fff"; ctx.font = "bold 34px sans-serif"; ctx.fillText(E.score.toLocaleString(), lx + 66, ly + 56);
-  ctx.textAlign = "right"; ctx.font = "bold 16px sans-serif";
-  if (R.rank >= 0) { ctx.fillStyle = "#ffd740"; ctx.fillText(`ランキング ${R.rank + 1}位!`, lx + lw - 16, ly + 52); }
-  else { ctx.fillStyle = "#78909c"; ctx.fillText(DEBUG_START ? "デバッグ(記録しない)" : "ランキング外", lx + lw - 16, ly + 52); }
-  ctx.textAlign = "left"; ctx.font = "12px sans-serif"; ctx.fillStyle = "#b0bec5";
+  paperPanel(lx, ly, lw, 376, `今回の結果  (${MODES[MODE].label})`);
+  ctx.textAlign = "left"; ctx.fillStyle = U.sub; uiFont(13, "normal"); ctx.fillText("スコア", lx + 16, ly + 56);
+  ctx.fillStyle = U.ink; uiFont(34); ctx.fillText(E.score.toLocaleString(), lx + 66, ly + 60);
+  ctx.textAlign = "right"; uiFont(16);
+  if (R.rank >= 0) { ctx.fillStyle = HL; ctx.fillText(`ランキング ${R.rank + 1}位!`, lx + lw - 16, ly + 56); }
+  else { ctx.fillStyle = U.sub; ctx.fillText(DEBUG_START ? "デバッグ(記録しない)" : "ランキング外", lx + lw - 16, ly + 56); }
+  ctx.textAlign = "left"; uiFont(12, "normal"); ctx.fillStyle = U.sub;
   if (cleared && S.clearBonus) {
-    const B = S.clearBonus;
-    ctx.fillText(`(クリア +${B.clear.toLocaleString()} ・ 残りHP +${B.hp.toLocaleString()}${B.noBomb ? "" : " を含む)"}`, lx + 16, ly + 76);
-    if (B.noBomb) { const w = ctx.measureText(`(クリア +${B.clear.toLocaleString()} ・ 残りHP +${B.hp.toLocaleString()}`).width;
-      ctx.fillStyle = "#ffd740"; ctx.font = "bold 12px sans-serif"; ctx.fillText(` ・ ノーボム +${B.noBomb.toLocaleString()} を含む)`, lx + 16 + w, ly + 76); }
+    const B = S.clearBonus, head = `(クリア +${B.clear.toLocaleString()} ・ 残りHP +${B.hp.toLocaleString()}`;
+    ctx.fillText(head + (B.noBomb ? "" : " を含む)"), lx + 16, ly + 80);
+    if (B.noBomb) { const w = ctx.measureText(head).width;
+      ctx.fillStyle = HL; uiFont(12); ctx.fillText(` ・ ノーボム +${B.noBomb.toLocaleString()} を含む)`, lx + 16 + w, ly + 80); }
   }
   const stats = [
     ["生存", cleared ? `${clearMinutes()}分間 生き残った!` : `${fmtTime(E.time)} / ${fmtTime(FINAL.clearAt)}`],
@@ -1559,88 +1604,95 @@ function drawResult() {
     ["ボム", E.bombs === 0 && cleared ? "0回 ノーボム!" : `${E.bombs}回`],   // ノーボムボーナスはクリアしたときだけ
   ];
   stats.forEach(([k, v], i) => {
-    const x = lx + 16 + (i % 2) * 216, y = ly + 104 + Math.floor(i / 2) * 24;
-    ctx.fillStyle = "#78909c"; ctx.font = "13px sans-serif"; ctx.fillText(k, x, y);
-    ctx.fillStyle = (k === "大巨兵" && E.titan) || (k === "ボム" && E.bombs === 0 && cleared) ? "#ffd740" : "#eceff1"; ctx.font = "bold 14px sans-serif"; ctx.fillText(v, x + 66, y);
+    const x = lx + 16 + (i % 2) * 216, y = ly + 106 + Math.floor(i / 2) * 24;
+    ctx.fillStyle = U.sub; uiFont(13, "normal"); ctx.fillText(k, x, y);
+    ctx.fillStyle = (k === "大巨兵" && E.titan) || (k === "ボム" && E.bombs === 0 && cleared) ? HL : U.ink; uiFont(14); ctx.fillText(v, x + 66, y);
   });
-  drawBuildCards(lx + 16, ly + 182, lw - 32, E.build);
+  drawBuildCards(lx + 16, ly + 184, lw - 32, E.build);
 
   // ---- 右: ランキング ----
   const rx = 496, ry = 70, rw = 440;
-  panel(rx, ry, rw, 376, `ランキング  ${MODES[MODE].label}`);
+  paperPanel(rx, ry, rw, 376, `ランキング  ${MODES[MODE].label}`);
   const rows = R.naming ? [...R.list.slice(0, R.rank), E, ...R.list.slice(R.rank)].slice(0, RANKING.size) : R.list;
   // 列の位置。名前は nameW まで、スコアは scoreW まで(大きな数字は文字を小さくして収める)ので、重ならない
   const cols = { rank: rx + 34, name: rx + 48, nameW: 146, score: rx + 318, scoreW: 116, res: rx + 368, heat: rx + rw - 12 };
-  ctx.font = "11px sans-serif"; ctx.fillStyle = "#78909c";
-  ctx.textAlign = "right"; ctx.fillText("順位", cols.rank, ry + 46); ctx.fillText("スコア", cols.score, ry + 46); ctx.fillText("最高熱量", cols.heat, ry + 46);
-  ctx.textAlign = "left"; ctx.fillText("名前", cols.name, ry + 46); ctx.textAlign = "center"; ctx.fillText("結果", cols.res, ry + 46);
-  const rowH = 29;
+  uiFont(11, "normal"); ctx.fillStyle = U.sub;
+  ctx.textAlign = "right"; ctx.fillText("順位", cols.rank, ry + 48); ctx.fillText("スコア", cols.score, ry + 48); ctx.fillText("最高熱量", cols.heat, ry + 48);
+  ctx.textAlign = "left"; ctx.fillText("名前", cols.name, ry + 48); ctx.textAlign = "center"; ctx.fillText("結果", cols.res, ry + 48);
+  const rowH = 29, medal = ["#d9a400", "#8d99a6", "#b5651d"];
   for (let i = 0; i < RANKING.size; i++) {
     const y = ry + 58 + i * rowH, r = rows[i], me = r === E;
-    if (me) { ctx.fillStyle = "rgba(255,215,64,0.18)"; ctx.fillRect(rx + 6, y, rw - 12, rowH - 3); }
-    else if (i % 2) { ctx.fillStyle = "rgba(255,255,255,0.03)"; ctx.fillRect(rx + 6, y, rw - 12, rowH - 3); }
+    if (me) { ctx.fillStyle = "rgba(255,213,64,0.5)"; ctx.fillRect(rx + 8, y + 1, rw - 16, rowH - 4); }   // 蛍光ペンで目立たせる
+    ctx.strokeStyle = "rgba(90,58,34,0.15)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(rx + 10, y + rowH - 1.5); ctx.lineTo(rx + rw - 10, y + rowH - 1.5); ctx.stroke();
     const ty = y + 19;
-    ctx.textAlign = "right"; ctx.font = "bold 15px sans-serif"; ctx.fillStyle = i === 0 ? "#ffd740" : i === 1 ? "#cfd8dc" : i === 2 ? "#ffab91" : "#90a4ae";
-    ctx.fillText(`${i + 1}`, cols.rank, ty);
-    if (!r) { ctx.textAlign = "left"; ctx.fillStyle = "#455a64"; ctx.font = "13px sans-serif"; ctx.fillText("---", cols.name, ty); continue; }
+    if (i < 3) {   // 1〜3位はメダル
+      ctx.fillStyle = medal[i]; ctx.beginPath(); ctx.arc(cols.rank - 5, ty - 5, 10, 0, Math.PI * 2); ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = U.line; ctx.stroke();
+      ctx.textAlign = "center"; uiFont(12); ctx.fillStyle = "#fff"; ctx.fillText(`${i + 1}`, cols.rank - 5, ty - 1);
+    } else { ctx.textAlign = "right"; uiFont(15); ctx.fillStyle = U.sub; ctx.fillText(`${i + 1}`, cols.rank, ty); }
+    if (!r) { ctx.textAlign = "left"; ctx.fillStyle = "rgba(90,58,34,0.35)"; uiFont(13, "normal"); ctx.fillText("---", cols.name, ty); continue; }
     if (me && R.naming) placeNameInput(cols.name - 4, y + 2, cols.nameW + 4, rowH - 7);   // この行に名前の入力欄を重ねる
-    else { ctx.textAlign = "left"; ctx.fillStyle = me ? "#ffd740" : "#eceff1"; fitFont(r.name, cols.nameW, 14, me ? "bold" : "normal"); ctx.fillText(r.name, cols.name, ty); }
+    else { ctx.textAlign = "left"; ctx.fillStyle = U.ink; fitUiFont(r.name, cols.nameW, 14, me ? "bold" : "normal"); ctx.fillText(r.name, cols.name, ty); }
     const sc = r.score.toLocaleString();
-    ctx.textAlign = "right"; ctx.fillStyle = me ? "#ffd740" : "#fff"; fitFont(sc, cols.scoreW, 14); ctx.fillText(sc, cols.score, ty);
-    ctx.textAlign = "center"; ctx.font = "bold 12px sans-serif";
-    ctx.fillStyle = r.clear ? (r.titan ? "#ffd740" : "#69f0ae") : "#90a4ae";
+    ctx.textAlign = "right"; ctx.fillStyle = me ? HL : U.ink; fitUiFont(sc, cols.scoreW, 14); ctx.fillText(sc, cols.score, ty);
+    ctx.textAlign = "center"; uiFont(12);
+    ctx.fillStyle = r.clear ? (r.titan ? HL : OK) : U.sub;
     ctx.fillText(r.clear ? (r.titan ? "★CLEAR" : "CLEAR") : fmtTime(r.time), cols.res, ty);
-    ctx.textAlign = "right"; ctx.font = "13px sans-serif"; ctx.fillStyle = "#ffcc80"; ctx.fillText(`×${r.heat.toFixed(1)}`, cols.heat, ty);
+    ctx.textAlign = "right"; uiFont(13, "normal"); ctx.fillStyle = "#b8601a"; ctx.fillText(`×${r.heat.toFixed(1)}`, cols.heat, ty);
   }
-  ctx.textAlign = "center"; ctx.font = "bold 13px sans-serif";
-  if (R.naming) { ctx.fillStyle = Math.floor(performance.now() / 400) % 2 ? "#ffd740" : "#fff59d"; ctx.fillText("ランキング入り! 名前を入力して Enter(空欄なら「" + RANKING.defaultName + "」)", rx + rw / 2, ry + 366); }
-  else if (R.saved) { ctx.fillStyle = "#69f0ae"; ctx.fillText("ランキングに登録しました", rx + rw / 2, ry + 366); }
-  else { ctx.fillStyle = "#78909c"; ctx.font = "12px sans-serif"; ctx.fillText("★CLEAR = 大巨兵も倒してクリア", rx + rw / 2, ry + 366); }
+  ctx.textAlign = "center"; uiFont(13);
+  if (R.naming) { ctx.fillStyle = Math.floor(performance.now() / 400) % 2 ? HL : U.ink; ctx.fillText("ランキング入り! 名前を入力して Enter(空欄なら「" + RANKING.defaultName + "」)", rx + rw / 2, ry + 366); }
+  else if (R.saved) { ctx.fillStyle = OK; ctx.fillText("ランキングに登録しました", rx + rw / 2, ry + 366); }
+  else { ctx.fillStyle = U.sub; uiFont(12, "normal"); ctx.fillText("★CLEAR = 大巨兵も倒してクリア", rx + rw / 2, ry + 366); }
 
-  // ---- 下: ボタン ----
+  // ---- 下: ボタン(紙のボタン。選んでいるほうは黄色で少し浮く) ----
   END_BTN.forEach((btn, i) => {
-    const b = endButtonRect(i), on = R.sel === i && !R.naming;
-    ctx.fillStyle = on ? "#2b3a6e" : "#1a2140"; ctx.fillRect(b.x, b.y, b.w, b.h);
-    ctx.strokeStyle = on ? "#ffd740" : "#3a4570"; ctx.lineWidth = on ? 3 : 2; ctx.strokeRect(b.x, b.y, b.w, b.h);
-    ctx.textAlign = "center"; ctx.fillStyle = on ? "#fff" : "#b0bec5"; ctx.font = "bold 18px sans-serif"; ctx.fillText(btn.label, b.x + b.w / 2, b.y + 21);
-    ctx.font = "12px sans-serif"; ctx.fillStyle = on ? "#ffe082" : "#78909c"; ctx.fillText(btn.sub, b.x + b.w / 2, b.y + 37);
+    const b = endButtonRect(i), on = R.sel === i && !R.naming, up = on ? -3 : 0;
+    ctx.globalAlpha = R.naming ? 0.6 : 1;
+    ctx.fillStyle = `rgba(20,10,0,${on ? 0.45 : 0.3})`; roundRectPath(b.x + 3, b.y + 5, b.w, b.h, 10); ctx.fill();
+    ctx.fillStyle = on ? "#ffe48a" : U.paper; roundRectPath(b.x, b.y + up, b.w, b.h, 10); ctx.fill();
+    ctx.lineWidth = on ? 3.5 : 2.5; ctx.strokeStyle = U.line; ctx.stroke();
+    ctx.textAlign = "center"; ctx.fillStyle = U.ink; uiFont(18); ctx.fillText(btn.label, b.x + b.w / 2, b.y + up + 21);
+    uiFont(12, "normal"); ctx.fillStyle = U.sub; ctx.fillText(btn.sub, b.x + b.w / 2, b.y + up + 37);
+    ctx.globalAlpha = 1;
   });
   // 次に役立つコツ(パネルとボタンのあいだ)
-  ctx.textAlign = "center"; ctx.fillStyle = "#fff59d"; fitFont("TIPS  " + R.tip, W - 60, 14); ctx.fillText("TIPS  " + R.tip, W / 2, 465);
-  ctx.textAlign = "center"; ctx.font = "12px sans-serif"; ctx.fillStyle = "#78909c";
+  ctx.textAlign = "center"; fitUiFont("TIPS  " + R.tip, W - 60, 14); outlinedText("TIPS  " + R.tip, W / 2, 465, "#fff3c4", 4);
+  ctx.textAlign = "center"; uiFont(12, "normal"); ctx.fillStyle = "#e8d6bc";
   const note = idleNote().trim();
   ctx.fillText(R.naming ? "名前を決めると、ボタンを選べます(ボタンをクリックしても登録されます)" : `←→ で選んで Enter / クリック    Esc: タイトルへ${note ? "    " + note : ""}`, W / 2, H - 10);
 }
 
-// ビルド: 武装4枠・強化4枠をカードで並べる。進化したものは金色
+// ビルド: 武装4枠・強化4枠を小さな紙のカードで並べる。進化したものは黄色い紙
 function drawBuildCards(x, y, w, build) {
-  const cw = (w - 3 * 8) / 4, ch = 70;
+  const U = PAPER_UI, cw = (w - 3 * 8) / 4, ch = 70;
   ["weapon", "passive"].forEach((type, row) => {
     const owned = build.filter(c => c.type === type), slots = type === "weapon" ? CARD_RULES.weaponSlots : CARD_RULES.passiveSlots;
-    const ry = y + row * (ch + 26);
-    ctx.textAlign = "left"; ctx.font = "bold 12px sans-serif"; ctx.fillStyle = TYPE_COLOR[type];
+    const ry = y + row * (ch + 26), tag = U.tag[type];
+    ctx.textAlign = "left"; uiFont(12); ctx.fillStyle = tag;
     ctx.fillText(`${TYPE_LABEL[type]} ${owned.length}/${slots}`, x, ry - 6);
     for (let i = 0; i < slots; i++) {
       const cx = x + i * (cw + 8), c = owned[i];
       if (!c) {   // 空き枠
-        ctx.strokeStyle = "#37474f"; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]); ctx.strokeRect(cx, ry, cw, ch); ctx.setLineDash([]);
-        ctx.textAlign = "center"; ctx.fillStyle = "#455a64"; ctx.font = "12px sans-serif"; ctx.fillText("空き", cx + cw / 2, ry + ch / 2 + 4);
+        ctx.strokeStyle = "rgba(90,58,34,0.35)"; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]); roundRectPath(cx, ry, cw, ch, 6); ctx.stroke(); ctx.setLineDash([]);
+        ctx.textAlign = "center"; ctx.fillStyle = "rgba(90,58,34,0.45)"; uiFont(12, "normal"); ctx.fillText("空き", cx + cw / 2, ry + ch / 2 + 4);
         continue;
       }
-      const evo = !!c.evo, col = evo ? "#ffd740" : TYPE_COLOR[type];
-      ctx.fillStyle = evo ? "#3a3110" : "#1a2140"; ctx.fillRect(cx, ry, cw, ch);
-      ctx.strokeStyle = evo ? "#ffd740" : "#3a4570"; ctx.lineWidth = evo ? 2.5 : 1.5; ctx.strokeRect(cx, ry, cw, ch);
-      ctx.fillStyle = col; ctx.fillRect(cx, ry, cw, 3);
+      const evo = !!c.evo, col = evo ? U.tag.evolve : tag;
+      ctx.fillStyle = "rgba(20,10,0,0.18)"; roundRectPath(cx + 2, ry + 3, cw, ch, 6); ctx.fill();
+      ctx.fillStyle = evo ? U.evoPaper : "#fffdf5"; roundRectPath(cx, ry, cw, ch, 6); ctx.fill();
+      ctx.save(); ctx.clip(); ctx.fillStyle = col; ctx.fillRect(cx, ry, cw, 5); ctx.restore();
+      ctx.lineWidth = evo ? 2.5 : 2; ctx.strokeStyle = U.line; roundRectPath(cx, ry, cw, ch, 6); ctx.stroke();
       ctx.textAlign = "center";
       if (evo) {
-        ctx.fillStyle = "#ffd740"; fitFont("★" + c.evo, cw - 8, 14); ctx.fillText("★" + c.evo, cx + cw / 2, ry + 26);
-        ctx.fillStyle = "#bcaaa4"; fitFont(`(${c.name})`, cw - 8, 11, "normal"); ctx.fillText(`(${c.name})`, cx + cw / 2, ry + 44);
-        ctx.fillStyle = "#ffd740"; ctx.font = "bold 11px sans-serif"; ctx.fillText("進化!", cx + cw / 2, ry + 60);
+        ctx.fillStyle = "#a07000"; fitUiFont("★" + c.evo, cw - 8, 14); ctx.fillText("★" + c.evo, cx + cw / 2, ry + 27);
+        ctx.fillStyle = U.sub; fitUiFont(`(${c.name})`, cw - 8, 11, "normal"); ctx.fillText(`(${c.name})`, cx + cw / 2, ry + 45);
+        ctx.fillStyle = "#c25e00"; uiFont(11); ctx.fillText("進化!", cx + cw / 2, ry + 61);
       } else {
-        ctx.fillStyle = "#fff"; fitFont(c.name, cw - 8, 14); ctx.fillText(c.name, cx + cw / 2, ry + 28);
+        ctx.fillStyle = U.ink; fitUiFont(c.name, cw - 8, 14); ctx.fillText(c.name, cx + cw / 2, ry + 29);
         const pw = 12, pg = 3, px = cx + (cw - (pw * CARD_RULES.maxLevel + pg * (CARD_RULES.maxLevel - 1))) / 2;   // レベルの目盛り
-        for (let k = 0; k < CARD_RULES.maxLevel; k++) { ctx.fillStyle = k < c.lv ? col : "#37474f"; ctx.fillRect(px + k * (pw + pg), ry + 40, pw, 8); }
-        ctx.fillStyle = "#90a4ae"; ctx.font = "11px sans-serif"; ctx.fillText(c.lv >= CARD_RULES.maxLevel ? "Lv MAX" : `Lv ${c.lv}`, cx + cw / 2, ry + 62);
+        for (let k = 0; k < CARD_RULES.maxLevel; k++) { ctx.fillStyle = k < c.lv ? col : "rgba(90,58,34,0.15)"; roundRectPath(px + k * (pw + pg), ry + 40, pw, 8, 3); ctx.fill(); }
+        ctx.fillStyle = U.sub; uiFont(11, "normal"); ctx.fillText(c.lv >= CARD_RULES.maxLevel ? "Lv MAX" : `Lv ${c.lv}`, cx + cw / 2, ry + 62);
       }
     }
   });
@@ -2065,43 +2117,72 @@ function drawBombStock() {
 function cardRect(i) { const w = 250, h = 190, gap = 22, x0 = (W - (w * 3 + gap * 2)) / 2; return { x: x0 + i * (w + gap), y: 170, w, h }; }
 
 function drawLevelUp() {
-  ctx.fillStyle = "rgba(5,8,16,0.8)"; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = "#fff"; ctx.font = "bold 32px sans-serif"; ctx.textAlign = "center";
-  ctx.fillText(`LEVEL UP!  Lv ${S.level}`, W / 2, 112);
-  ctx.font = "14px sans-serif"; ctx.fillStyle = "#b0bec5";
-  ctx.fillText(`カードを1枚選ぶ(クリック または 1〜3キー)    武装 ${ownedOf("weapon").length}/${CARD_RULES.weaponSlots} ・ 強化 ${ownedOf("passive").length}/${CARD_RULES.passiveSlots}`, W / 2, 144);
+  uiBackdrop();
+  const t = (performance.now() - lvlOpen) / 1000;
+  // 見出し
+  ctx.textAlign = "center"; uiFont(34); outlinedText(`LEVEL UP!  Lv ${S.level}`, W / 2, 112, "#ffd740");
+  uiFont(14, "normal"); ctx.fillStyle = "#fff3dc";
+  ctx.fillText(`カードを1枚えらぶ(クリック または 1〜3キー)    武装 ${ownedOf("weapon").length}/${CARD_RULES.weaponSlots} ・ 強化 ${ownedOf("passive").length}/${CARD_RULES.passiveSlots}`, W / 2, 144);
   choices.forEach((c, i) => {
     const b = cardRect(i);
-    const hover = mouse.x > b.x && mouse.x < b.x + b.w && mouse.y > b.y && mouse.y < b.y + b.h;
-    const col = TYPE_COLOR[c.type];
-    ctx.fillStyle = hover ? "#263259" : "#1a2140"; ctx.fillRect(b.x, b.y, b.w, b.h);
-    ctx.strokeStyle = hover ? col : "#3a4570"; ctx.lineWidth = 2; ctx.strokeRect(b.x, b.y, b.w, b.h);
-    ctx.fillStyle = col; ctx.fillRect(b.x, b.y, b.w, 4);
-    ctx.textAlign = "left"; ctx.font = "bold 12px sans-serif"; ctx.fillText(`[${i + 1}] ${TYPE_LABEL[c.type]}`, b.x + 12, b.y + 24);
-    const L = lv(c.id);
-    ctx.textAlign = "right";
-    if (c.type === "weapon" || c.type === "passive") {
-      ctx.fillStyle = L === 0 ? "#ffeb3b" : "#b0bec5";
-      ctx.fillText(L === 0 ? "NEW!" : `Lv ${L} → ${L + 1}`, b.x + b.w - 12, b.y + 24);
-    }
-    ctx.textAlign = "center"; ctx.fillStyle = "#fff"; ctx.font = "bold 21px sans-serif";
-    ctx.fillText(c.name, b.x + b.w / 2, b.y + 60);
-    ctx.fillStyle = "#cfd8dc"; ctx.font = "13px sans-serif";
-    if (c.type === "evolve") {
-      ctx.fillStyle = "#ffd740"; ctx.fillText(`${CARD[c.evo.from].name} + ${CARD[c.evo.with].name}`, b.x + b.w / 2, b.y + 86);
-      ctx.fillStyle = "#cfd8dc"; wrapText(c.desc(), b.x + b.w / 2, b.y + 112, b.w - 28, 18);
-      return;
-    }
-    let y = wrapText(c.desc(), b.x + b.w / 2, b.y + 92, b.w - 28, 18);
-    if (c.type === "weapon" && L > 0) { ctx.fillStyle = col; y = wrapText("Lvアップ: " + c.up, b.x + b.w / 2, y + 8, b.w - 28, 18); }
-    // 進化の組み合わせのヒント
-    const hint = EVOLUTIONS.find(v => !S.evolved[v.from] && ((c.id === v.with && lv(v.from) > 0) || (c.id === v.from && lv(v.with) > 0)));
-    if (hint) { ctx.fillStyle = "#ffd740"; ctx.font = "12px sans-serif"; wrapText(`★両方Lv5で「${hint.name}」に進化`, b.x + b.w / 2, Math.max(y + 8, b.y + b.h - 22), b.w - 20, 16); }
+    const k = Math.max(0, Math.min(1, (t - i * PAPER_UI.popStep) / PAPER_UI.pop));
+    if (k <= 0) return;
+    const hover = k >= 1 && mouse.x > b.x && mouse.x < b.x + b.w && mouse.y > b.y && mouse.y < b.y + b.h;
+    const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    ctx.save();
+    ctx.translate(cx, cy + (hover ? -8 : 0) + (1 - k) * 40);
+    ctx.rotate((hover ? 0 : PAPER_UI.tilt[i]) * Math.PI / 180);
+    const sc = backOut(k) * (hover ? 1.04 : 1); ctx.scale(sc, sc);
+    ctx.globalAlpha = Math.min(1, k * 2);
+    ctx.translate(-b.w / 2, -b.h / 2);
+    drawPaperCard(c, i, b.w, b.h, hover);
+    ctx.restore();
   });
   if (tut) {
-    ctx.textAlign = "center"; ctx.fillStyle = "#ffd740"; ctx.font = "bold 15px sans-serif";
-    ctx.fillText("カードは 武装4種類・強化4種類 まで持てます。何を選ぶかで戦い方が変わる!", W / 2, 400);
+    ctx.textAlign = "center"; uiFont(15);
+    outlinedText("カードは 武装4種類・強化4種類 まで持てます。何を選ぶかで戦い方が変わる!", W / 2, 404, "#ffd740", 5);
   }
+}
+function drawPaperCard(c, i, w, h, hover) {   // (0,0)を左上にしたカード1枚
+  const U = PAPER_UI, tag = U.tag[c.type], evo = c.type === "evolve";
+  // 影
+  ctx.fillStyle = `rgba(20,10,0,${hover ? 0.45 : 0.32})`; roundRectPath(hover ? 6 : 4, hover ? 10 : 6, w, h, 10); ctx.fill();
+  // 紙
+  roundRectPath(0, 0, w, h, 10);
+  ctx.fillStyle = evo ? U.evoPaper : hover ? U.paperHover : U.paper; ctx.fill();
+  ctx.save(); ctx.clip();   // 紙の罫線(ノート風)
+  ctx.strokeStyle = evo ? "rgba(217,164,0,0.18)" : "rgba(120,160,200,0.16)"; ctx.lineWidth = 1;
+  for (let y = 62; y < h; y += 20) { ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(w, y + 0.5); ctx.stroke(); }
+  ctx.restore();
+  ctx.lineWidth = 3.5; ctx.strokeStyle = U.line; roundRectPath(0, 0, w, h, 10); ctx.stroke();
+  // マスキングテープ
+  ctx.save(); ctx.translate(w / 2, 0); ctx.rotate((i % 2 ? 4 : -3) * Math.PI / 180);
+  ctx.fillStyle = evo ? "rgba(255,215,64,0.85)" : U.tape[i % U.tape.length]; ctx.fillRect(-34, -9, 68, 18);
+  ctx.restore();
+  // 種類のタグ(シール)
+  uiFont(12); const label = `${i + 1} ${TYPE_LABEL[c.type]}`, lw = ctx.measureText(label).width + 16;
+  ctx.fillStyle = tag; roundRectPath(10, 14, lw, 20, 10); ctx.fill();
+  ctx.lineWidth = 2; ctx.strokeStyle = U.line; ctx.stroke();
+  ctx.textAlign = "left"; ctx.fillStyle = "#fff"; ctx.fillText(label, 18, 29);
+  const L = lv(c.id);
+  ctx.textAlign = "right";
+  if (c.type === "weapon" || c.type === "passive") {
+    if (L === 0) { uiFont(13); ctx.fillStyle = "#e53935"; ctx.fillText("NEW!", w - 12, 29); }
+    else { uiFont(12); ctx.fillStyle = U.sub; ctx.fillText(`Lv ${L} → ${L + 1}`, w - 12, 29); }
+  }
+  // 名前
+  ctx.textAlign = "center"; ctx.fillStyle = U.ink; fitUiFont(c.name, w - 24, 22); ctx.fillText(c.name, w / 2, 64);
+  ctx.fillStyle = tag; ctx.fillRect(w / 2 - 30, 72, 60, 3);   // 名前の下線
+  uiFont(13, "normal"); ctx.fillStyle = U.ink;
+  if (evo) {
+    uiFont(13); ctx.fillStyle = "#a07000"; ctx.fillText(`${CARD[c.evo.from].name} + ${CARD[c.evo.with].name}`, w / 2, 96);
+    uiFont(13, "normal"); ctx.fillStyle = U.ink; wrapText(c.desc(), w / 2, 120, w - 28, 18);
+    return;
+  }
+  let y = wrapText(c.desc(), w / 2, 98, w - 28, 18);
+  if (c.type === "weapon" && L > 0) { ctx.fillStyle = "#b8601a"; y = wrapText("Lvアップ: " + c.up, w / 2, y + 6, w - 28, 18); }
+  const hint = EVOLUTIONS.find(v => !S.evolved[v.from] && ((c.id === v.with && lv(v.from) > 0) || (c.id === v.from && lv(v.with) > 0)));
+  if (hint) { ctx.fillStyle = "#a07000"; uiFont(12); wrapText(`★両方Lv5で「${hint.name}」に進化`, w / 2, Math.max(y + 6, h - 20), w - 20, 16); }
 }
 
 function wrapText(text, cx, y, maxW, lh) {
@@ -2133,13 +2214,12 @@ function drawTitle() {
   if (DEBUG_START) { ctx.fillStyle = "#80d8ff"; ctx.font = "bold 16px sans-serif"; ctx.fillText(`デバッグ: ${fmtTime(DEBUG_START.from)} から開始(ランキングには記録しません)`, W / 2, 440); }
 }
 
-function drawCenter(title, sub) {
-  ctx.fillStyle = "rgba(5,8,16,0.75)"; ctx.fillRect(0, 0, W, H);
-  ctx.textAlign = "center"; ctx.fillStyle = "#fff"; ctx.font = "bold 48px sans-serif";
-  ctx.fillText(title, W / 2, 200);
-  ctx.font = "17px sans-serif"; ctx.fillStyle = "#cfd8dc";
+function drawCenter(title, sub) {   // ポーズなど(部屋をぼかして、フチ付きの文字)
+  uiBackdrop(0.55);
+  ctx.textAlign = "center"; uiFont(48); outlinedText(title, W / 2, 200, "#ffd740");
+  uiFont(17); ctx.lineJoin = "round"; ctx.lineWidth = 5; ctx.strokeStyle = PAPER_UI.line;
   let y = 250;
-  for (const l of sub.split("\n")) y = wrapText(l, W / 2, y, W - 120, 26) + 4;
+  for (const l of sub.split("\n")) { ctx.strokeText(l, W / 2, y); ctx.fillStyle = "#fff3dc"; y = wrapText(l, W / 2, y, W - 120, 26) + 4; }
 }
 
 // 画面上部の中央: スコアと熱量
