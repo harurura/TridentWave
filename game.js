@@ -629,6 +629,10 @@ function ownedOf(type) { return CARDS.filter(c => c.type === type && lv(c.id) > 
 // ============================================================
 function spawnEnemy(type, forceSide, forceTier) {
   const d = ENEMY[type];
+  if (type === "spitter" && S && !tut && !S.spitterHinted) {   // 砲撃手が初めて出たとき: 弾は撃ち落とせると伝える
+    S.spitterHinted = true;
+    S.tip = { text: "砲撃手の弾は 主砲で撃ち落とせる! 衝撃波でも消せる", life: 5 };
+  }
   const tier = forceTier != null ? forceTier : rollTier();
   const T = TIERS[tier];
   const hpBoost = type === "titan" ? HEAT.titanHpBoost : HEAT.hpBoost;   // 大巨兵は熱量で硬くなる割合を弱める
@@ -777,7 +781,7 @@ function update(dt) {
   // --- 敵弾 ---
   for (const eb of ebullets) {
     eb.x += eb.vx * dt; eb.y += eb.vy * dt; eb.life -= dt;
-    if (Math.hypot(P.x - eb.x, P.y - eb.y) < eb.r + PR - 2) { eb.life = 0; hurtPlayer(eb.dmg); }
+    if (Math.hypot(P.x - eb.x, P.y - eb.y) < eb.r + PR - 2) { eb.life = 0; if (hurtPlayer(eb.dmg) === "hit") S.bulletHits = (S.bulletHits || 0) + 1; }   // 敵の弾で被弾した回数(結果画面のコツ用)
   }
   ebullets = ebullets.filter(b => b.life > 0);
 
@@ -1461,11 +1465,14 @@ function finishRun(cleared) {
   S.result = { entry, list, rank: ranked ? rank : -1, naming: ranked, sel: 0, saved: false, tip: resultTip(cleared) };
   if (ranked) showNameInput();
 }
+const RESULT_TIP_BULLET_HITS = 3;   // 敵の弾でこの回数以上被弾したら、「撃ち落とせる」のコツを出す
 // 結果画面のコツ: 今回のプレイに合わせて、次に役立つものを1つだけ選ぶ(上から順に当てはまったもの)
 function resultTip(cleared) {
   const evolvedAny = Object.keys(S.evolved).length > 0, heat = S.maxHeat;
+  const bulletTip = (S.bulletHits || 0) >= RESULT_TIP_BULLET_HITS;   // 敵の弾で何度も被弾した
   const tips = cleared ? [
     [S.bombsUsed > 0, `ボムを使わずにクリアすると ノーボムボーナス(20万 × 最高熱量)! 今回なら +${(Math.round(SCORE.noBombBonus * heat / 10) * 10).toLocaleString()}`],
+    [bulletTip, "敵の弾は 主砲で撃ち落とせる。衝撃波でも消せるので、被弾を減らして熱量を保とう"],
     [heat < 4, "被弾せずに素早く倒し続けると熱量が上がり、スコアの倍率も上がる(最大×6.0)"],
     [!evolvedAny, "武装と強化を両方Lv5にすると★進化。一気に強くなって、稼ぎやすくなる"],
     [S.finalSpawned && !S.finalKilled, `9:00の大巨兵を倒すと +${SCORE.titanBonus.toLocaleString()} × 熱量 のボーナス`],
@@ -1473,6 +1480,7 @@ function resultTip(cleared) {
     [true, "マークした敵をまとめて倒し、熱量×8.0を保ってさらに上のスコアへ!"],
   ] : [
     [S.bombs > 0, "ボムを残したまま倒されました。囲まれたら迷わず 右クリック(Space)でボム!"],
+    [bulletTip, "敵の弾は 主砲で撃ち落とせる! 上空の砲撃手の弾に気をつけよう(衝撃波でも消せる)"],
     [!evolvedAny, "武装と強化を両方Lv5にすると★進化。カード選択画面の「★進化」のヒントを見て選ぼう"],
     [true, "装甲板でHPを増やしたり、♥やSのアイテムを撃って取ると生き残りやすい"],
   ];
