@@ -683,7 +683,7 @@ function spawnEnemy(type, forceSide, forceTier) {
   const hp = d.hp * T.hp * (S && !tut ? 1 + (heatEff() - HEAT.min) * hpBoost : 1);   // 熱量が高いと少し硬くなる
   const e = { type, d, tier, T, hp, maxHp: hp, r: d.r * (1 + tier * 0.1), speed: d.speed * (0.9 + Math.random() * 0.2),
               color: tier ? mixColor(d.color, T.tint, 0.55) : d.color,
-              flash: 0, t: Math.random() * 10, age: 0, cool: 2 + Math.random(), spdMul: 1 };
+              flash: 0, flashGap: 0, t: Math.random() * 10, age: 0, cool: 2 + Math.random(), spdMul: 1 };
   const side = forceSide || (Math.random() < 0.5 ? "L" : "R");
   if (d.kind === "ground") {
     e.x = side === "L" ? -e.r : W + e.r; e.y = GY - e.r;
@@ -1083,7 +1083,7 @@ function updateEnemies(dt) {
   if (grav && (S.gravCool = (S.gravCool ?? G.tick) - dt) <= 0) { S.gravCool += G.tick; gravHit = true; }
   for (const e of enemies) {
     if (e.hp <= 0) continue;
-    e.t += dt; e.age += dt; e.flash = Math.max(0, e.flash - dt);
+    e.t += dt; e.age += dt; e.flash = Math.max(0, e.flash - dt); e.flashGap -= dt;
     if (e.mark > 0) e.mark -= dt;   // 標的マークの残り時間
     const inField = slowL && dist(e, P) < slowR + e.r;
     e.spdMul = inField ? 1 - slowF * (grav && !G.resist ? 1 : slowEffect(e)) : 1;   // 重力場は効きにくさを掛けない(元の強さ)
@@ -1153,7 +1153,9 @@ function overTitan(e, t) {
 function damageEnemy(e, dmg) {
   if (e.hp <= 0) return;
   if (e.mark > 0) dmg *= 1 + MARK.vuln;   // 標的マーク: 受けるダメージが増える
-  e.hp -= dmg; e.flash = 0.08;
+  e.hp -= dmg;
+  if (!e.d.boss) e.flash = HIT_FLASH.time;
+  else if (e.flashGap <= 0) { e.flash = HIT_FLASH.boss.time; e.flashGap = HIT_FLASH.boss.gap; }   // ボスは間をあけて、うすく光る
   sfx.hit();
   if (e.hp <= 0) killEnemy(e);
 }
@@ -1841,12 +1843,15 @@ function drawEnemyArt(e, paper, withShadow) {
   };
   if (withShadow) { const a = ctx.globalAlpha; ctx.globalAlpha = a * PAPER.shadow.alpha; put(v.shadow, PAPER.shadow.dx, PAPER.shadow.dy); ctx.globalAlpha = a; }
   put(paper ? v.paper : v.plain, 0, 0);
-  if (e.flash > 0) put(paper ? v.paperWhite : v.white, 0, 0);
+  if (e.flash > 0) {
+    const a = ctx.globalAlpha; if (e.d.boss) ctx.globalAlpha = a * HIT_FLASH.boss.alpha;
+    put(paper ? v.paperWhite : v.white, 0, 0); ctx.globalAlpha = a;
+  }
 }
 
 // 敵の形を塗る(紙風でも従来でも共通)
 function drawEnemyShape(e) {
-  ctx.fillStyle = e.flash > 0 ? "#ffffff" : e.color;
+  ctx.fillStyle = e.flash > 0 ? (e.d.boss ? mixColor(e.color, "#ffffff", HIT_FLASH.boss.alpha) : "#ffffff") : e.color;
   const k = e.d.kind;
   if (k === "ground") {
     ctx.fillRect(e.x - e.r, e.y - e.r, e.r * 2, e.r * 2);
@@ -1916,7 +1921,7 @@ function enemyPose(e) {
   } else if (k === "air") pose.rot = Math.sin(e.t * 3) * 0.18;
   else if (k === "side") pose.rot = Math.sin(e.t * 4) * 0.1;
   else if (k === "hover") pose.rot = Math.sin(e.t * 2) * 0.08;
-  if (e.flash > 0) { pose.sx *= 1.15; pose.sy *= 0.85; }
+  if (e.flash > 0) { const q = e.d.boss ? HIT_FLASH.boss.squash : 0.15; pose.sx *= 1 + q; pose.sy *= 1 - q; }
   return pose;
 }
 

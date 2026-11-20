@@ -281,6 +281,11 @@ const ENEMY_ART = {
   titan:   { src: "assets/enemy_titan.png",   height: 210, hitR: 91 },   // 大巨兵: 要塞ロボ
   dummy:   { src: "assets/enemy_dummy.png",   height: 56,  hitR: 25 },   // チュートリアルの的: 射的の的
 };
+// 被弾したときに白く光る。巨兵・大巨兵は攻撃が集中して光りっぱなしになるので、うすく・間をあけて光らせる
+const HIT_FLASH = {
+  time: 0.08,                                          // 雑魚: 真っ白に光る時間(秒)
+  boss: { alpha: 0.35, time: 0.06, gap: 0.25, squash: 0.03 },   // ボス: 白の濃さ・光る時間・次に光るまでの間・つぶれ具合
+};
 const ENEMY_TINT = 0.45;   // 上位種の色を絵に重ねる濃さ(0〜1)
 
 // ---- 背景の画像 ----
