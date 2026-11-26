@@ -143,7 +143,7 @@
       <div class="legend">
         <div><span class="n">1</span><span><b>HP</b> ― 0 になるとゲームオーバー</span></div>
         <div><span class="n">2</span><span><b>スコア</b></span></div>
-        <div><span class="n">3</span><span><b>熱量ゲージ</b> ― 高いほど敵が増え、スコアも増える(右下で説明)</span></div>
+        <div><span class="n">3</span><span><b>熱量ゲージ</b> ― 高いほど敵が増え、スコアも増える(左下で説明)</span></div>
         <div><span class="n">4</span><span><b>時間</b> ― 10:00 でクリア</span></div>
         <div><span class="n">5</span><span><b>持っているカード</b> ― ★は進化したもの</span></div>
         <div><span class="n">6</span><span><b>照準</b> ― マウスの位置。ここへ自動で撃つ</span></div>
@@ -171,9 +171,19 @@
           <li>タイトルで <b>クリック</b> してスタート。最初に短い <b>チュートリアル</b> があります。</li>
           <li>敵が落とす <b>経験値の粒(緑のひし形)</b> がたまると <b>レベルアップ</b>。3枚のカードから <b>1枚</b> 選びます。</li>
           <li>カードは <span class="chip w">武装</span> <b>4種類</b>・<span class="chip p">強化</span> <b>4種類</b> まで、それぞれ <b>Lv5</b> まで上がります。決まった組み合わせを <b>両方Lv5</b> にすると <span class="chip e">★進化</span> できます(裏面の表)。</li>
-          <li>時間がたつと敵が強くなり、中ボス「巨兵」も来ます。<b>9:00 に大巨兵</b> が登場。</li>
+          <li>時間がたつと敵が強くなり、中ボス「巨兵」も来ます(7:15・8:15 には増援)。<b>9:00 に大巨兵</b> が登場。</li>
           <li><b>10:00 まで生き残ればクリア!</b> ランキングに名前を残せます。</li>
         </ol>
+      </div>
+
+      <div class="box">
+        <h2><span class="hl">熱量(ねつりょう)とスコア</span></h2>
+        <div class="heat"><span>×1.0</span><div class="bar"></div><span>×6.0</span></div>
+        <ul>
+          <li>敵を <b>すばやく倒し続ける</b> と熱量が上がります。</li>
+          <li>熱量が高いほど <b>敵が増えて硬く</b> なりますが、<b>倒したときのスコアも熱量の倍率</b> で増えます。</li>
+          <li><b>被弾・ボムを使う・敵に囲まれる</b> と熱量が下がります。</li>
+        </ul>
       </div>
     </div>
 
@@ -187,7 +197,7 @@
           <div class="enemy"><div class="pic"><img src="../assets/enemy_diver.png"></div><b>降下兵</b>上から降りる</div>
           <div class="enemy"><div class="pic"><img src="../assets/enemy_brute.png"></div><b>重装兵</b>遅いが硬い</div>
           <div class="enemy warn"><div class="pic"><img src="../assets/enemy_spitter.png"></div><b>砲撃手</b>弾を撃ってくる</div>
-          <div class="enemy boss"><div class="pic"><img src="../assets/enemy_boss.png"></div><b>巨兵</b>中ボス</div>
+          <div class="enemy boss"><div class="pic"><img src="../assets/enemy_boss.png"></div><b>巨兵</b>突進してくる</div>
           <div class="enemy boss warn"><div class="pic"><img src="../assets/enemy_titan.png"></div><b>大巨兵</b>9:00の大ボス</div>
         </div>
         <p style="font-size:7.8pt; color:var(--sub); margin-top:1.2mm;">時間がたつと、色違いの強い個体が混ざってきます。</p>
@@ -199,21 +209,13 @@
         <p style="font-size:8.2pt; margin-top:1mm;">アイテムは敵が落とします。<b class="k">撃って当てると手に入ります。</b></p>
       </div>
 
-      <div class="box">
-        <h2><span class="hl">熱量(ねつりょう)とスコア</span></h2>
-        <div class="heat"><span>×1.0</span><div class="bar"></div><span>×6.0</span></div>
-        <ul>
-          <li>敵を <b>すばやく倒し続ける</b> と熱量が上がります。</li>
-          <li>熱量が高いほど <b>敵が増えて硬く</b> なりますが、<b>倒したときのスコアも熱量の倍率</b> で増えます。</li>
-          <li><b>被弾・ボムを使う・敵に囲まれる</b> と熱量が下がります。</li>
-        </ul>
-      </div>
-
       <div class="box white">
         <h2><span class="hl">コツ</span></h2>
         <ul class="tips">
           <li>敵が近づく前に倒そう。囲まれると熱量が下がります。</li>
           <li><b>砲撃手の弾は、主砲で撃ち落とせます。</b></li>
+          <li><b>大巨兵のミサイル</b> は「!」が出た方向(左・上・右)から来ます。主砲で撃ち落とそう。</li>
+          <li>巨兵が身構えて「!」を出したら、<b>突進</b> の合図です。</li>
           <li>ボムはピンチのときに。<b>ボムを1回も使わずにクリア</b> すると大きなボーナス!</li>
           <li>カードに「★両方Lv5で〜に進化」と出たら、進化のチャンスです。</li>
         </ul>
