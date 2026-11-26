@@ -1218,7 +1218,7 @@ function explode(x, y, radius, dmg, except, color = "#ffb74d") {
 // 戻り値: "shield"=シールドで防いだ / "invuln"=無敵時間中 / "hit"=ダメージを受けた
 function hurtPlayer(raw) {
   if (S.shield > 0) {   // シールド中はダメージを受けない
-    floatText(P.x, P.y - 40, "ガード", "#4dd0e1"); sound.play(1000, 0.08, "triangle", 0.04, 400);
+    if (!(S.guardFx > S.time - 0.4)) { S.guardFx = S.time; floatText(P.x, P.y - 40, "ガード", "#4dd0e1"); sound.play(1000, 0.08, "triangle", 0.04, 400); }   // ボスが触れ続けても表示は間をあける
     return "shield";
   }
   if (S.invuln > 0) return "invuln";
@@ -1238,7 +1238,11 @@ function hurtPlayer(raw) {
 function hitPlayer(e) {
   if (e.hp <= 0) return;
   const res = hurtPlayer(e.d.dmg * e.T.dmg);
-  if (e.d.boss) { e.x += (e.x < P.x ? -1 : 1) * 160; return; }   // ボスは消えずに押し戻される
+  if (e.d.boss) {   // ボスは消えずに押し戻される。ただしシールド中は押し戻さず、触れたまま止まる(シールドが切れるとダメージ)
+    const s = e.x < P.x ? -1 : 1;
+    if (res === "shield") e.x = P.x + s * (e.r + PR + 8); else e.x += s * 160;
+    return;
+  }
   if (res === "invuln") { knockback(e, P.x, P.y, HURT.push); return; }   // 無敵中に触れた敵は消さずに押し戻す
   e.hp = 0; burst(e.x, e.y, e.color, 14);
 }
