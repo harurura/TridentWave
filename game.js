@@ -1024,8 +1024,57 @@ function clusterBurst(b) {
 }
 function flakBarrel(i) { return flakUnit(i).muzzle; }
 
+// ---- 巨兵・大巨兵の動き ----
+function bossHalf(e) { return e.art ? e.artW * 0.5 : e.r; }
+function bossDust(e, n, spread = 60) {   // 足元の土煙
+  for (let i = 0; i < n; i++) particles.push({ x: e.x + (Math.random() - 0.5) * bossHalf(e) * 1.4, y: GY - 3, vx: (Math.random() - 0.5) * spread * 2, vy: -Math.random() * spread, life: 0.3 + Math.random() * 0.3, color: "#d7ccc8" });
+}
+function bossPushed(e, amt) {   // 踏ん張り: 押し戻された距離がたまると、しばらく押し戻されなくなる
+  e.pushed = (e.pushed || 0) + amt;
+  if (e.pushed < BOSS_MOVE.braceAt) return;
+  e.pushed = 0; e.brace = BOSS_MOVE.braceSec;
+  floatText(e.x, e.y - (e.art ? e.artH / 2 : e.r) - 24, "踏ん張り!", "#ffb74d");
+  bossDust(e, 18, 90); sound.play(70, 0.3, "square", 0.08, 40); shake = Math.max(shake, 4);
+}
+// 地上を歩くボスの速さを決める(登場・身構え・突進)。毎フレーム呼ばれる
+function bossMove(e, dt, sp) {
+  const B = BOSS_MOVE, half = bossHalf(e);
+  if (!e.entered) {   // 登場: 体が全部画面に入るまでは押し戻されない。巨兵は早足で入ってくる
+    if (e.x - half >= 0 && e.x + half <= W) e.entered = true;
+    else return e.type === "boss" ? Math.max(sp, B.enterSpeed) : sp;
+  }
+  if (e.brace > 0) { e.brace -= dt; if (Math.random() < 0.15) bossDust(e, 1, 30); }   // 踏ん張り中は足元から土煙
+  if (e.pushed > 0) e.pushed = Math.max(0, e.pushed - B.braceDecay * dt);
+  if (e.type !== "boss") return sp;   // 大巨兵は突進しない(ミサイルで攻める)
+  if (!e.mode) { e.mode = "walk"; e.dashCool = B.dashFirst; }
+  if (e.mode === "walk") {
+    if ((e.dashCool -= dt) <= 0 && Math.abs(P.x - e.x) > e.r + PR + 40) { e.mode = "crouch"; e.modeT = B.crouch; sound.play(55, 0.5, "sawtooth", 0.06, 30); }
+    return sp;
+  }
+  if (e.mode === "crouch") {   // 身構え(予告): 立ち止まって震え、足元に土煙
+    if (Math.random() < 0.4) bossDust(e, 1, 40);
+    if ((e.modeT -= dt) <= 0) { e.mode = "dash"; e.dashLeft = B.dashDist; shake = Math.max(shake, 5); bossDust(e, 14, 120); sound.play(120, 0.3, "sawtooth", 0.08, 60); }
+    return 0;
+  }
+  // dash: 一気に前へ(減速フィールドも効かない)
+  const v = B.dashSpeed;
+  if (Math.random() < 0.6) bossDust(e, 1, 30);
+  if ((e.dashLeft -= v * dt) <= 0) { e.mode = "walk"; e.dashCool = B.dashEvery; }
+  return v;
+}
+// 一度画面に入ったボスは、体が画面の外へはみ出すところまで押し戻されない
+function keepBossOnScreen(e) {
+  if (!e.entered) return;
+  const half = bossHalf(e);
+  e.x = Math.max(half, Math.min(W - half, e.x));
+}
+
 function knockback(e, fx_, fy, amt) {
-  if (e.d.boss) amt *= 0.15;
+  if (e.d.boss) {
+    if (!e.entered || e.brace > 0 || e.mode === "crouch" || e.mode === "dash") return;   // 登場中・踏ん張り中・突進中は押し戻されない
+    amt *= 0.15;
+    if (e.type === "boss") bossPushed(e, amt);
+  }
   if (e.d.kind === "ground") e.x += (e.x < fx_ ? -1 : 1) * amt;
   else {
     const a = Math.atan2(e.y - fy, e.x - fx_);
@@ -1110,7 +1159,7 @@ function updateEnemies(dt) {
     const sp = e.speed * e.spdMul;
     const k = e.d.kind;
     if (k === "ground") {
-      e.x += Math.sign(P.x - e.x) * sp * dt;
+      e.x += Math.sign(P.x - e.x) * (e.d.boss ? bossMove(e, dt, sp) : sp) * dt;
       if (Math.abs(P.x - e.x) < e.r + PR + 8) hitPlayer(e);
       if (BOSS_SHELL.enable && e.type === "titan") bossShell(e, dt);
     } else if (k === "side") {
@@ -1134,6 +1183,7 @@ function updateEnemies(dt) {
         ebullets.push({ x: e.x, y: my, vx: Math.cos(a) * 130, vy: Math.sin(a) * 130, r: 7, life: 8, dmg: Math.round(10 * e.T.dmg) });
       }
     }
+    if (e.d.boss) keepBossOnScreen(e);
   }
   enemies = enemies.filter(e => e.hp > 0);
 }
@@ -1286,6 +1336,7 @@ function hitPlayer(e) {
   const res = hurtPlayer(e.d.dmg * e.T.dmg);
   if (e.d.boss) {   // ボスは消えずに押し戻される。ただしシールド中は押し戻さず、触れたまま止まる(シールドが切れるとダメージ)
     const s = e.x < P.x ? -1 : 1;
+    if (e.mode === "dash" || e.mode === "crouch") { e.mode = "walk"; e.dashCool = BOSS_MOVE.dashEvery; }   // 突進は当たったら終わり
     if (res === "shield") e.x = P.x + s * (e.r + PR + 8); else e.x += s * 160;
     return;
   }
@@ -1975,6 +2026,20 @@ function drawMark(e) {
 }
 
 function drawEnemyMarks(e, oy) {
+  if (e.brace > 0) {   // 踏ん張り中: 足元に黄色い輪
+    const a = 0.65 + 0.35 * Math.sin(performance.now() / 90), rx = bossHalf(e) * 0.95;
+    ctx.beginPath(); ctx.ellipse(e.x, GY, rx, 10, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(40,20,0,0.7)"; ctx.lineWidth = 8; ctx.stroke();   // 黒っぽい縁で、上位種の輪と見分けやすく
+    ctx.strokeStyle = `rgba(255,214,0,${a})`; ctx.lineWidth = 4; ctx.stroke();
+  }
+  if (e.mode === "crouch") {   // 突進の予告: 頭の上に「!」
+    const top = (e.art ? e.artH / 2 : e.r) + 34, on = Math.floor(performance.now() / 120) % 2;
+    ctx.save(); ctx.globalAlpha = on ? 1 : 0.6;
+    ctx.beginPath(); ctx.arc(e.x, e.y + oy - top, 15, 0, Math.PI * 2); ctx.fillStyle = "#ff5252"; ctx.fill();
+    ctx.lineWidth = 3; ctx.strokeStyle = "#fff"; ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.font = "bold 20px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("!", e.x, e.y + oy - top + 1);
+    ctx.textBaseline = "alphabetic"; ctx.restore();
+  }
   if (e.tier > 0) {   // 上位種は輪で示す。色だけに頼らないよう、段階の数だけ輪を重ねる(強化1本・精鋭2本・異形3本)
     ctx.strokeStyle = e.T.tint; ctx.lineWidth = 2;
     const rr = e.art ? Math.max(e.r, e.artH * 0.5) : e.r;   // 絵のある敵は絵を囲む大きさに
@@ -2005,7 +2070,9 @@ function enemyPose(e) {
   const k = e.d.kind, pose = { hop: 0, rot: 0, sx: 1, sy: 1, ax: e.x, ay: e.y };
   if (k === "ground") {
     pose.ay = e.art ? e.y + e.artH / 2 : e.y + e.r;   // 足元を基準に変形する
-    const moving = e.speed > 0 && e.spdMul > 0;
+    const moving = e.speed > 0 && e.spdMul > 0 && e.mode !== "crouch" && e.mode !== "dash";
+    if (e.mode === "crouch") { pose.sx = 1.08; pose.sy = 0.86; pose.rot = (Math.random() - 0.5) * 0.05; }   // 身構え: 低くかがんで震える
+    if (e.mode === "dash") pose.rot = Math.sign(P.x - e.x) * 0.14;   // 突進: 前のめり
     if (moving) pose.hop = Math.abs(Math.sin(e.t * PAPER.hop.speed * e.spdMul)) * PAPER.hop.height * (e.d.boss ? 0.6 : 1);
     if (moving && pose.hop < 1.2) { pose.sx = 1.08; pose.sy = 0.92; }   // 着地の瞬間にむにっとつぶれる
   } else if (k === "air") pose.rot = Math.sin(e.t * 3) * 0.18;
