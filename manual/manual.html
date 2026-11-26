@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>TRIDENT WAVE 説明書</title>
+<style>
+  @page { size: A4; margin: 0; }
+  :root {
+    --ink: #3b2414; --sub: #6e5039; --line: #5a3a22; --paper: #fff6e0; --cream: #fffbf0;
+    --weapon: #e8892b; --passive: #4a8fd6; --evo: #d9a400; --filler: #5aa95a; --red: #d84315;
+  }
+  * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", sans-serif; color: var(--ink); font-size: 8.9pt; line-height: 1.45; background: #fff; }
+  .round { font-family: "Hiragino Maru Gothic ProN", "Zen Maru Gothic", "Hiragino Sans", sans-serif; }
+  .page { width: 210mm; height: 297mm; padding: 8mm 10mm 7mm; position: relative; overflow: hidden; page-break-after: always; display: flex; flex-direction: column; gap: 2.6mm; }
+  .page:last-child { page-break-after: auto; }
+
+  /* 見出し */
+  .head { display: flex; align-items: flex-end; justify-content: space-between; border-bottom: 1.2mm solid var(--line); padding-bottom: 1.6mm; }
+  .logo { font-family: "Hiragino Maru Gothic ProN", sans-serif; font-weight: 800; font-size: 25pt; white-space: nowrap; letter-spacing: 0.04em; line-height: 1; color: #2f86c9; -webkit-text-stroke: 0.25mm var(--line); }
+  .logo small { display: block; font-size: 9pt; letter-spacing: 0.1em; color: var(--sub); -webkit-text-stroke: 0; margin-top: 1.4mm; font-weight: 700; }
+  .head .right { text-align: right; font-size: 9pt; color: var(--sub); }
+  .head .right b { display: block; font-family: "Hiragino Maru Gothic ProN", sans-serif; font-size: 11.5pt; white-space: nowrap; color: var(--ink); }
+
+  h2 { font-family: "Hiragino Maru Gothic ProN", sans-serif; font-size: 11pt; margin: 0 0 1mm; display: flex; align-items: center; gap: 1.6mm; }
+  h2::before { content: ""; width: 3.2mm; height: 3.2mm; border-radius: 50%; background: var(--weapon); border: 0.45mm solid var(--line); flex: none; }
+  h2 .hl { background: linear-gradient(transparent 55%, rgba(255,213,64,0.6) 55%); padding: 0 1mm; }
+
+  .box { background: var(--paper); border: 0.55mm solid var(--line); border-radius: 3mm; padding: 2.2mm 3mm; }
+  .box.white { background: var(--cream); }
+  p { margin: 0; }
+  ul { margin: 0; padding-left: 4.2mm; }
+  li { margin: 0.3mm 0; }
+  b.k { color: var(--red); }
+
+  /* 画面の見かた */
+  .screen { display: grid; grid-template-columns: 114mm 1fr; gap: 3mm; align-items: stretch; }
+  .shot { position: relative; border: 0.6mm solid var(--line); border-radius: 2.4mm; overflow: hidden; line-height: 0; }
+  .shot img { width: 100%; display: block; }
+  .pin { position: absolute; transform: translate(-50%, -50%); width: 5.4mm; height: 5.4mm; border-radius: 50%; background: #ffd740; color: var(--ink); border: 0.5mm solid var(--line); font: 800 8.5pt/4.4mm "Hiragino Maru Gothic ProN", sans-serif; text-align: center; box-shadow: 0 0 0 0.5mm #fff; }
+  .legend { display: flex; flex-direction: column; justify-content: space-between; font-size: 8.6pt; line-height: 1.4; }
+  .legend div { display: flex; gap: 1.6mm; align-items: flex-start; }
+  .legend .n { flex: none; width: 4.6mm; height: 4.6mm; border-radius: 50%; background: #ffd740; border: 0.4mm solid var(--line); font: 800 7.5pt/3.8mm "Hiragino Maru Gothic ProN", sans-serif; text-align: center; margin-top: 0.3mm; }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm; }
+  .stack { display: flex; flex-direction: column; gap: 3mm; }
+
+  /* 操作 */
+  table.keys { border-collapse: collapse; width: 100%; }
+  table.keys td { padding: 0.6mm 0; vertical-align: middle; border-bottom: 0.25mm dashed rgba(90,58,34,0.3); }
+  table.keys tr:last-child td { border-bottom: none; }
+  table.keys td:first-child { width: 31mm; white-space: nowrap; }
+  kbd { display: inline-block; min-width: 5.4mm; padding: 0 1.3mm; border: 0.4mm solid var(--line); border-bottom-width: 0.9mm; border-radius: 1.2mm; background: #fff; font: 700 8pt/4.4mm "Hiragino Sans", sans-serif; text-align: center; margin-right: 0.6mm; }
+
+  /* 流れ */
+  ol.flow { list-style: none; padding: 0; margin: 0; counter-reset: f; }
+  ol.flow li { counter-increment: f; position: relative; padding-left: 6.4mm; margin: 0 0 0.8mm; }
+  ol.flow li::before { content: counter(f); position: absolute; left: 0; top: 0.2mm; width: 4.6mm; height: 4.6mm; border-radius: 50%; background: var(--line); color: #fff; font: 800 7.5pt/4.6mm "Hiragino Maru Gothic ProN", sans-serif; text-align: center; }
+
+  /* 敵 */
+  .enemies { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.4mm 1.6mm; }
+  .enemy { text-align: center; font-size: 7.6pt; line-height: 1.3; }
+  .enemy .pic { height: 9.5mm; display: flex; align-items: flex-end; justify-content: center; }
+  .enemy img { max-height: 9.5mm; max-width: 15mm; }
+  .enemy b { display: block; font-size: 8.4pt; font-family: "Hiragino Maru Gothic ProN", sans-serif; margin-top: 0.4mm; }
+  
+  .enemy.warn b { color: var(--red); }
+
+  .items { display: flex; gap: 2.4mm; margin-top: 1.4mm; }
+  .item { flex: 1; display: flex; align-items: center; gap: 1.4mm; font-size: 8.2pt; line-height: 1.3; }
+  .item .ic { flex: none; width: 6.4mm; height: 6.4mm; border-radius: 50%; background: #2b2b3a; border: 0.45mm solid var(--line); font: 800 9pt/5.5mm "Hiragino Maru Gothic ProN", sans-serif; text-align: center; }
+
+  /* 熱量ゲージ */
+  .heat { display: flex; align-items: center; gap: 2mm; margin: 1mm 0 1.4mm; font-size: 8pt; }
+  .heat .bar { flex: 1; height: 3.2mm; border: 0.4mm solid var(--line); border-radius: 1.6mm; background: linear-gradient(90deg, #ffe082, #ff9800 60%, #e65100); }
+
+  .tips li { margin: 0.6mm 0; }
+  .foot { margin-top: auto; display: flex; justify-content: space-between; font-size: 7.6pt; color: var(--sub); border-top: 0.3mm solid rgba(90,58,34,0.35); padding-top: 1.2mm; }
+
+  /* ---- 裏面 ---- */
+  .rule { display: flex; gap: 3mm; align-items: stretch; }
+  .rule .box { flex: 1; font-size: 8.3pt; line-height: 1.4; padding: 1.6mm 2.4mm; }
+  .chip { display: inline-block; padding: 0 1.8mm; border-radius: 3mm; border: 0.35mm solid var(--line); color: #fff; font: 700 7.6pt/4.2mm "Hiragino Maru Gothic ProN", sans-serif; white-space: nowrap; }
+  .chip.w { background: var(--weapon); } .chip.p { background: var(--passive); } .chip.e { background: var(--evo); } .chip.f { background: var(--filler); }
+
+  table.list { width: 100%; border-collapse: separate; border-spacing: 0; border: 0.55mm solid var(--line); border-radius: 3mm; overflow: hidden; font-size: 8.5pt; line-height: 1.38; background: var(--cream); }
+  table.list th { background: var(--line); color: #fff; font: 700 8pt "Hiragino Maru Gothic ProN", sans-serif; text-align: left; padding: 0.7mm 2mm; }
+  table.list td { padding: 0.65mm 2mm; border-top: 0.25mm solid rgba(90,58,34,0.2); vertical-align: middle; }
+  table.list tr:nth-child(even) td { background: rgba(255,226,170,0.28); }
+  table.list td.name { font: 700 9pt "Hiragino Maru Gothic ProN", sans-serif; white-space: nowrap; }
+  table.list td.name::before { content: ""; display: inline-block; width: 1.4mm; height: 3.6mm; border-radius: 0.7mm; margin-right: 1.6mm; vertical-align: -0.6mm; }
+  table.list.w td.name::before { background: var(--weapon); }
+  table.list.p td.name::before { background: var(--passive); }
+  table.list td.up { color: var(--sub); font-size: 7.8pt; }
+  table.list td.to { white-space: nowrap; font-size: 8pt; }
+  table.list td.to b { color: #9a6f00; }
+
+  table.evo { width: 100%; border-collapse: separate; border-spacing: 0; border: 0.7mm solid var(--line); border-radius: 3mm; overflow: hidden; font-size: 8.5pt; line-height: 1.38; background: #fff8d6; }
+  table.evo th { background: #b88a00; color: #fff; font: 700 8pt "Hiragino Maru Gothic ProN", sans-serif; text-align: left; padding: 0.7mm 2mm; }
+  table.evo td { padding: 0.7mm 2mm; border-top: 0.25mm solid rgba(90,58,34,0.2); vertical-align: middle; }
+  table.evo td.combo { white-space: nowrap; }
+  table.evo td.combo .plus { margin: 0 0.8mm; font-weight: 800; }
+  table.evo td.res { white-space: nowrap; font: 800 9.4pt "Hiragino Maru Gothic ProN", sans-serif; color: #7a5600; }
+  table.evo td.res::before { content: "→ ★"; color: var(--evo); margin-right: 0.6mm; }
+
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm; }
+</style>
+</head>
+<body>
+
+<!-- ======================= 表面: 遊び方 ======================= -->
+<section class="page">
+  <div class="head">
+    <div class="logo">TRIDENT WAVE<small>トライデント・ウェーブ 遊び方ガイド</small></div>
+    <div class="right"><b>動けない砲台で、3方向から来るおもちゃの軍団を迎え撃て!</b>マウスだけで遊べる防衛シューティング</div>
+  </div>
+
+  <div class="box" style="display:flex; gap:4mm; align-items:center;">
+    <div style="flex:1;">
+      <h2><span class="hl">目的</span></h2>
+      <p>子ども部屋の真ん中にある砲台を守り、<b class="k">10分間 生き残ればクリア</b>。左・右・上からやってくる敵を倒してレベルアップし、カードを選んで砲台を強くしていきます。<b class="k">9:00 には最後の大ボス「大巨兵」</b>がやってきます。</p>
+    </div>
+    <div style="flex:none; text-align:center; font-size:7.6pt; color:var(--sub); line-height:1.3;">
+      <img src="../assets/player_body.png" style="height:12mm; display:block; margin:0 auto 0.6mm;">あなたの砲台
+    </div>
+  </div>
+
+  <div>
+    <h2><span class="hl">画面の見かた</span></h2>
+    <div class="screen">
+      <div class="shot">
+        <img src="../assets/screenshot.jpg" alt="プレイ画面">
+        <span class="pin" style="left:29.5%; top:3.6%;">1</span>
+        <span class="pin" style="left:60.6%; top:3.6%;">2</span>
+        <span class="pin" style="left:69%; top:7.4%;">3</span>
+        <span class="pin" style="left:85.5%; top:3.8%;">4</span>
+        <span class="pin" style="left:16%; top:15%;">5</span>
+        <span class="pin" style="left:57.5%; top:28.5%;">6</span>
+        <span class="pin" style="left:59.5%; top:73%;">7</span>
+        <span class="pin" style="left:39%; top:91%;">8</span>
+      </div>
+      <div class="legend">
+        <div><span class="n">1</span><span><b>HP</b> ― 0 になるとゲームオーバー</span></div>
+        <div><span class="n">2</span><span><b>スコア</b></span></div>
+        <div><span class="n">3</span><span><b>熱量ゲージ</b> ― 高いほど敵が増え、スコアも増える(右下で説明)</span></div>
+        <div><span class="n">4</span><span><b>時間</b> ― 10:00 でクリア</span></div>
+        <div><span class="n">5</span><span><b>持っているカード</b> ― ★は進化したもの</span></div>
+        <div><span class="n">6</span><span><b>照準</b> ― マウスの位置。ここへ自動で撃つ</span></div>
+        <div><span class="n">7</span><span><b>自機(砲台)</b> ― その場から動けない</span></div>
+        <div><span class="n">8</span><span><b>ボム</b> ― 残りの数(最大4個)</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cols">
+    <div class="stack">
+      <div class="box white">
+        <h2><span class="hl">操作</span></h2>
+        <table class="keys">
+          <tr><td><b>マウスを動かす</b></td><td>狙う(弾は <b>自動で連射</b>)</td></tr>
+          <tr><td><kbd>右クリック</kbd> <kbd>Space</kbd></td><td><b>ボム</b>(画面中の敵に大ダメージ)</td></tr>
+          <tr><td><kbd>クリック</kbd> <kbd>1</kbd>〜<kbd>3</kbd></td><td>レベルアップ時に <b>カードを選ぶ</b></td></tr>
+          <tr><td><kbd>P</kbd> <kbd>Esc</kbd></td><td>ポーズ(チュートリアル中の Esc は飛ばす)</td></tr>
+          <tr><td><kbd>T</kbd></td><td>オートエイム(近くの敵を自動で狙う)</td></tr>
+        </table>
+      </div>
+      <div class="box white">
+        <h2><span class="hl">ゲームの流れ</span></h2>
+        <ol class="flow">
+          <li>タイトルで <b>クリック</b> してスタート。最初に短い <b>チュートリアル</b> があります。</li>
+          <li>敵が落とす <b>経験値の粒(緑のひし形)</b> がたまると <b>レベルアップ</b>。3枚のカードから <b>1枚</b> 選びます。</li>
+          <li>カードは <span class="chip w">武装</span> <b>4種類</b>・<span class="chip p">強化</span> <b>4種類</b> まで、それぞれ <b>Lv5</b> まで上がります。決まった組み合わせを <b>両方Lv5</b> にすると <span class="chip e">★進化</span> できます(裏面の表)。</li>
+          <li>時間がたつと敵が強くなり、中ボス「巨兵」も来ます。<b>9:00 に大巨兵</b> が登場。</li>
+          <li><b>10:00 まで生き残ればクリア!</b> ランキングに名前を残せます。</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="stack">
+      <div class="box white">
+        <h2><span class="hl">敵とアイテム</span></h2>
+        <div class="enemies">
+          <div class="enemy"><div class="pic"><img src="../assets/enemy_grunt.png"></div><b>歩兵</b>地上を歩く</div>
+          <div class="enemy"><div class="pic"><img src="../assets/enemy_runner.png"></div><b>突撃兵</b>地上を速く走る</div>
+          <div class="enemy"><div class="pic"><img src="../assets/enemy_bat.png"></div><b>コウモリ</b>横の空から来る</div>
+          <div class="enemy"><div class="pic"><img src="../assets/enemy_diver.png"></div><b>降下兵</b>上から降りる</div>
+          <div class="enemy"><div class="pic"><img src="../assets/enemy_brute.png"></div><b>重装兵</b>遅いが硬い</div>
+          <div class="enemy warn"><div class="pic"><img src="../assets/enemy_spitter.png"></div><b>砲撃手</b>弾を撃ってくる</div>
+          <div class="enemy boss"><div class="pic"><img src="../assets/enemy_boss.png"></div><b>巨兵</b>中ボス</div>
+          <div class="enemy boss warn"><div class="pic"><img src="../assets/enemy_titan.png"></div><b>大巨兵</b>9:00の大ボス</div>
+        </div>
+        <p style="font-size:7.8pt; color:var(--sub); margin-top:1.2mm;">時間がたつと、色違いの強い個体が混ざってきます。</p>
+        <div class="items">
+          <div class="item"><span class="ic" style="color:#ff5c8a;">♥</span><span><b>HP回復</b></span></div>
+          <div class="item"><span class="ic" style="color:#4dd0e1;">S</span><span><b>シールド</b><br>8秒間 無敵</span></div>
+          <div class="item"><span class="ic" style="color:#ffd54f;">B</span><span><b>ボム +1</b></span></div>
+        </div>
+        <p style="font-size:8.2pt; margin-top:1mm;">アイテムは敵が落とします。<b class="k">撃って当てると手に入ります。</b></p>
+      </div>
+
+      <div class="box">
+        <h2><span class="hl">熱量(ねつりょう)とスコア</span></h2>
+        <div class="heat"><span>×1.0</span><div class="bar"></div><span>×6.0</span></div>
+        <ul>
+          <li>敵を <b>すばやく倒し続ける</b> と熱量が上がります。</li>
+          <li>熱量が高いほど <b>敵が増えて硬く</b> なりますが、<b>倒したときのスコアも熱量の倍率</b> で増えます。</li>
+          <li><b>被弾・ボムを使う・敵に囲まれる</b> と熱量が下がります。</li>
+        </ul>
+      </div>
+
+      <div class="box white">
+        <h2><span class="hl">コツ</span></h2>
+        <ul class="tips">
+          <li>敵が近づく前に倒そう。囲まれると熱量が下がります。</li>
+          <li><b>砲撃手の弾は、主砲で撃ち落とせます。</b></li>
+          <li>ボムはピンチのときに。<b>ボムを1回も使わずにクリア</b> すると大きなボーナス!</li>
+          <li>カードに「★両方Lv5で〜に進化」と出たら、進化のチャンスです。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot"><span>裏面: カードリスト・進化表</span></div>
+</section>
+
+<!-- ======================= 裏面: カードリスト ======================= -->
+<section class="page">
+  <div class="head">
+    <div class="logo" style="font-size:20pt;">TRIDENT WAVE<small>カードリスト・進化表</small></div>
+    <div class="right"><b>どのカードを育てるかで、戦い方が変わる!</b>レベルアップごとに3枚の中から1枚を選ぼう</div>
+  </div>
+
+  <div class="rule">
+    <div class="box white"><span class="chip w">武装</span> 新しい攻撃が増えるカード。<b>4種類まで</b> 持てます。</div>
+    <div class="box white"><span class="chip p">強化</span> 主砲や自機が強くなるカード。<b>4種類まで</b> 持てます。</div>
+    <div class="box white"><span class="chip e">★進化</span> 決まった武装と強化を <b>両方Lv5</b> にすると、レベルアップ時に出ます。</div>
+  </div>
+
+  <div>
+    <h2><span class="hl">武装カード</span>(どれも Lv5 まで)</h2>
+    <table class="list w">
+      <tr><th style="width:30mm;">名前</th><th>効果</th><th style="width:43mm;">Lvアップで</th><th style="width:47mm;">進化の相手</th></tr>
+      <tr><td class="name">地上砲台</td><td>左右に砲台を置き、地上の敵を撃って押し戻す</td><td class="up">連射・押し戻す力・威力アップ</td><td class="to">大口径弾 → <b>★重砲台</b></td></tr>
+      <tr><td class="name">対空砲台</td><td>上空の敵の近くで炸裂する弾を撃つ</td><td class="up">炸裂範囲・連射・威力アップ</td><td class="to">貫通弾芯 → <b>★高射砲陣地</b></td></tr>
+      <tr><td class="name">地雷</td><td>左右に地雷を置く。地上の敵が踏むと爆発</td><td class="up">設置数・威力アップ</td><td class="to">跳弾 → <b>★跳躍地雷</b></td></tr>
+      <tr><td class="name">誘導ミサイル</td><td>HPが一番高い敵を追いかけるミサイルを撃つ</td><td class="up">発射数・威力アップ</td><td class="to">爆裂弾頭 → <b>★クラスターミサイル</b></td></tr>
+      <tr><td class="name">雷撃</td><td>近くの敵に雷を落とし、次々と連鎖させる</td><td class="up">連鎖数・連射・威力アップ</td><td class="to">拡散砲身 → <b>★雷嵐</b></td></tr>
+      <tr><td class="name">衝撃波</td><td>周りの敵を定期的に吹き飛ばす。敵の弾も消す</td><td class="up">範囲・間隔・威力アップ</td><td class="to">装甲板 → <b>★反撃衝撃波</b></td></tr>
+      <tr><td class="name">減速フィールド</td><td>自機の周りに入った敵の動きを遅くする</td><td class="up">範囲・減速率アップ</td><td class="to">火力強化 → <b>★重力場</b></td></tr>
+      <tr><td class="name">標的レーザー</td><td>敵に標的マークを付ける。マークされた敵は受けるダメージ+25%、倒すとスコア×1.5</td><td class="up">マークの数・間隔アップ</td><td class="to">過給機 → <b>★賞金稼ぎ</b></td></tr>
+    </table>
+  </div>
+
+  <div>
+    <h2><span class="hl">強化カード</span>(どれも Lv5 まで。1Lvごとの効果)</h2>
+    <table class="list p">
+      <tr><th style="width:30mm;">名前</th><th>効果</th><th style="width:47mm;">進化の相手</th></tr>
+      <tr><td class="name">火力強化</td><td>全武器のダメージ +20%</td><td class="to">減速フィールド → <b>★重力場</b></td></tr>
+      <tr><td class="name">過給機</td><td>主砲の発射間隔 −15%。熱量が高いほどさらに速くなるが、被弾で熱量が多く下がる</td><td class="to">標的レーザー → <b>★賞金稼ぎ</b></td></tr>
+      <tr><td class="name">拡散砲身</td><td>主砲の弾が +1発(扇状に広がる)</td><td class="to">雷撃 → <b>★雷嵐</b></td></tr>
+      <tr><td class="name">貫通弾芯</td><td>主砲の弾が敵を +1体 貫通する</td><td class="to">対空砲台 → <b>★高射砲陣地</b></td></tr>
+      <tr><td class="name">大口径弾</td><td>主砲の弾が大きくなり威力 +15%(弾速は −10%)</td><td class="to">地上砲台 → <b>★重砲台</b></td></tr>
+      <tr><td class="name">爆裂弾頭</td><td>主砲の弾が当たると爆発する(Lvで範囲が広がる)</td><td class="to">誘導ミサイル → <b>★クラスターミサイル</b></td></tr>
+      <tr><td class="name">跳弾</td><td>主砲の弾が画面の端や地面で +1回 跳ね返る</td><td class="to">地雷 → <b>★跳躍地雷</b></td></tr>
+      <tr><td class="name">装甲板</td><td>最大HP +25、受けるダメージ −5%</td><td class="to">衝撃波 → <b>★反撃衝撃波</b></td></tr>
+    </table>
+  </div>
+
+  <div>
+    <h2><span class="hl">★進化表</span>(武装と強化を両方 Lv5 にすると選べる)</h2>
+    <table class="evo">
+      <tr><th style="width:57mm;">組み合わせ</th><th style="width:47mm;">進化</th><th>効果</th></tr>
+      <tr><td class="combo"><span class="chip w">地上砲台</span><span class="plus">+</span><span class="chip p">大口径弾</span></td><td class="res">重砲台</td><td>一撃が重くなり、着弾点が爆発する</td></tr>
+      <tr><td class="combo"><span class="chip w">対空砲台</span><span class="plus">+</span><span class="chip p">貫通弾芯</span></td><td class="res">高射砲陣地</td><td>砲身が3本に。炸裂弾が敵を貫き、何度も爆発する</td></tr>
+      <tr><td class="combo"><span class="chip w">誘導ミサイル</span><span class="plus">+</span><span class="chip p">爆裂弾頭</span></td><td class="res">クラスターミサイル</td><td>着弾すると子爆弾をばらまき、周りを巻き込む</td></tr>
+      <tr><td class="combo"><span class="chip w">地雷</span><span class="plus">+</span><span class="chip p">跳弾</span></td><td class="res">跳躍地雷</td><td>上空の敵にも反応し、地上と空中で2回爆発する</td></tr>
+      <tr><td class="combo"><span class="chip w">雷撃</span><span class="plus">+</span><span class="chip p">拡散砲身</span></td><td class="res">雷嵐</td><td>雷が3本に分かれて別々の敵に落ち、遠くまで連鎖する</td></tr>
+      <tr><td class="combo"><span class="chip w">衝撃波</span><span class="plus">+</span><span class="chip p">装甲板</span></td><td class="res">反撃衝撃波</td><td>範囲が広がり、被弾した瞬間に強い衝撃波で反撃する</td></tr>
+      <tr><td class="combo"><span class="chip w">減速フィールド</span><span class="plus">+</span><span class="chip p">火力強化</span></td><td class="res">重力場</td><td>中の敵を強く減速させ、押しつぶしてダメージを与える</td></tr>
+      <tr><td class="combo"><span class="chip w">標的レーザー</span><span class="plus">+</span><span class="chip p">過給機</span></td><td class="res">賞金稼ぎ</td><td>マークした敵のスコア×2、倒すと近くの敵へマークが移る。熱量の上限が ×8.0 に</td></tr>
+    </table>
+  </div>
+
+  <div class="two">
+    <div class="box white">
+      <h2><span class="hl">そのほかのカード</span></h2>
+      <p><span class="chip f">補充</span> <b>緊急修理</b> ― HPを30%回復。HPが半分を切ったときや、選べるカードが少ないときに出ます。</p>
+    </div>
+    <div class="box">
+      <h2><span class="hl">スコアを伸ばすには</span></h2>
+      <ul>
+        <li><b>ノーボムでクリア</b>:20万 × 最高熱量 のボーナス</li>
+        <li><b>大巨兵を倒す</b>:15万 × 熱量 のボーナス</li>
+        <li><b>標的マーク</b> した敵はスコア ×1.5(賞金稼ぎなら ×2)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="foot"><span>TRIDENT WAVE ― TCSフェス2026</span><span>表面: 遊び方</span></div>
+</section>
+
+</body>
+</html>
