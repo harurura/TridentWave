@@ -835,7 +835,8 @@ function update(dt) {
 
   // --- 敵弾 ---
   for (const eb of ebullets) {
-    eb.x += eb.vx * dt; eb.y += eb.vy * dt; eb.life -= dt;
+    if (eb.pod) updatePod(eb, dt);   // 大巨兵のミサイル
+    eb.x += eb.vx * dt; eb.y += eb.vy * dt; eb.life -= dt; if (eb.flash > 0) eb.flash -= dt;
     if (Math.hypot(P.x - eb.x, P.y - eb.y) < eb.r + PR - 2) { eb.life = 0; if (hurtPlayer(eb.dmg) === "hit") S.bulletHits = (S.bulletHits || 0) + 1; }   // 敵の弾で被弾した回数(結果画面のコツ用)
   }
   ebullets = ebullets.filter(b => b.life > 0);
@@ -1066,7 +1067,14 @@ function updateBullets(dt) {
 
     if (b.kind === "main") {
       for (const it of items) if (!it.dead && !(it.lock > 0) && Math.hypot(it.x - b.x, it.y - b.y) < 16 + b.r) collectItem(it);  // アイテムは主砲で撃って取る
-      for (const eb of ebullets) if (eb.life > 0 && Math.hypot(eb.x - b.x, eb.y - b.y) < eb.r + b.r) { eb.life = 0; burst(eb.x, eb.y, ENEMY_BULLET_COLOR, 5, 80); }
+      for (const eb of ebullets) if (eb.life > 0 && !b.hit.has(eb) && Math.hypot(eb.x - b.x, eb.y - b.y) < eb.r + b.r) {
+        if (eb.shell) {   // 大巨兵の砲弾: 主砲のダメージで耐久が減る。弾は止まる(貫通があれば抜ける)
+          b.hit.add(eb); eb.hp -= b.dmg; eb.flash = 0.06;
+          if (b.pierce > 0) b.pierce--; else b.life = 0;
+          if (eb.hp > 0) { sfx.hit(); if (b.life <= 0) break; continue; }
+        }
+        eb.life = 0; burst(eb.x, eb.y, ENEMY_BULLET_COLOR, eb.shell ? 12 : 5, eb.shell ? 140 : 80);
+      }
     }
 
     for (const e of enemies) {
@@ -1104,6 +1112,7 @@ function updateEnemies(dt) {
     if (k === "ground") {
       e.x += Math.sign(P.x - e.x) * sp * dt;
       if (Math.abs(P.x - e.x) < e.r + PR + 8) hitPlayer(e);
+      if (BOSS_SHELL.enable && e.type === "titan") bossShell(e, dt);
     } else if (k === "side") {
       e.x += Math.sign(P.x - e.x) * sp * dt;
       if (Math.abs(P.x - e.x) < 220) e.baseY += (P.y - e.baseY) * dt * 1.5 * e.spdMul;   // 近くなったら降下
@@ -1233,6 +1242,43 @@ function hurtPlayer(raw) {
   for (const e of enemies) if (e.hp > 0 && dist(e, P) < HURT.pushRadius + e.r) knockback(e, P.x, P.y, HURT.push);
   fx.push({ type: "ring", r: HURT.pushRadius, life: 0.3, max: 0.3, color: "255,138,128" });
   return "hit";
+}
+
+// 大巨兵のミサイル: 背中から真上へ打ち上げ、画面の外で待ってから、左上・真上・右上の別々の方向から戻ってくる
+const POD_ENTRY = { L: () => ({ x: -20, y: 150 }), T: () => ({ x: P.x + (Math.random() - 0.5) * 160, y: -20 }), R: () => ({ x: W + 20, y: 150 }) };
+function bossShell(e, dt) {
+  const B = BOSS_SHELL;
+  const half = e.art ? e.artW * 0.5 : e.r;
+  if (e.x + half < 60 || e.x - half > W - 60) return;   // 体がほとんど画面の外にあるうちは撃たない
+  if (e.shellCool == null) e.shellCool = B.interval * 0.4;
+  if ((e.shellCool -= dt) > 0) return;
+  e.shellCool = B.interval;
+  const sides = ["L", "T", "R"].sort(() => Math.random() - 0.5);   // 戻ってくる順番は毎回ちがう
+  const top = e.y - (e.art ? e.artH * 0.45 : e.r);
+  for (let i = 0; i < B.volley; i++) {
+    const x = Math.max(30, Math.min(W - 30, e.x + (i - (B.volley - 1) / 2) * 22));
+    ebullets.push({ pod: true, phase: "up", side: sides[i % 3], wait: B.wait + i * B.waitStep,
+      x, y: top, vx: (i - 1) * 25, vy: -B.launchSpeed, r: B.r, life: 30, dmg: Math.round(B.dmg * e.T.dmg), shell: true, hp: B.hp, maxHp: B.hp, flash: 0 });
+  }
+  sound.play(160, 0.35, "sawtooth", 0.06, 900);   // 打ち上げの音
+  if (!S.shellHinted) { S.shellHinted = true; S.tip = { text: "大巨兵のミサイルは 左・上・右 から来る! 「!」の方向を撃ち落とそう", life: 6 }; }
+}
+function updatePod(eb, dt) {   // ミサイルの動き(打ち上げ → 画面の外で待つ → 戻ってきて自機へ)
+  const B = BOSS_SHELL;
+  if (eb.phase === "up") {
+    if (eb.y < -40) { eb.phase = "wait"; eb.vx = eb.vy = 0; eb.hold = { x: eb.x, y: eb.y }; eb.x = eb.y = -9999; }   // 待っている間は当たらない場所へ
+  } else if (eb.phase === "wait") {
+    if ((eb.wait -= dt) <= 0) {
+      const p = eb.mark || POD_ENTRY[eb.side](), a = Math.atan2(P.y - p.y, P.x - p.x);   // 予告マークを出した場所から戻ってくる
+      eb.phase = "dive"; eb.x = p.x; eb.y = p.y; eb.vx = Math.cos(a) * B.speed; eb.vy = Math.sin(a) * B.speed;
+      sound.play(700, 0.12, "square", 0.04, 300);
+    } else if (!eb.mark) eb.mark = POD_ENTRY[eb.side]();   // 予告マークの位置
+  } else {   // dive: 少しずつ自機へ向きを変える
+    let cur = Math.atan2(eb.vy, eb.vx), diff = Math.atan2(P.y - eb.y, P.x - eb.x) - cur;
+    while (diff > Math.PI) diff -= Math.PI * 2; while (diff < -Math.PI) diff += Math.PI * 2;
+    cur += Math.max(-B.turn * dt, Math.min(B.turn * dt, diff));
+    eb.vx = Math.cos(cur) * B.speed; eb.vy = Math.sin(cur) * B.speed;
+  }
 }
 
 function hitPlayer(e) {
@@ -1830,7 +1876,36 @@ function drawWorldRest() {   // 自機・エフェクト・破片・文字
 
 // 敵弾の見た目。自機側の弾は丸、敵弾だけは とげのある星形 にして、色が見分けにくくても形で分かるようにする
 const ENEMY_BULLET_COLOR = "#ff3ddc";   // マゼンタ: 色覚の型を問わず、自機の弾(淡い黄)や経験値と混ざりにくい
+// 大巨兵のミサイル: 黒い胴体にマゼンタの先端と炎。待っている間は、戻ってくる場所の画面のふちに「!」を出す
+function drawPod(eb) {
+  if (eb.phase === "wait") {
+    if (!eb.mark || eb.wait > BOSS_SHELL.warn) return;
+    const x = Math.max(22, Math.min(W - 22, eb.mark.x)), y = Math.max(84, eb.mark.y), on = Math.floor(performance.now() / 120) % 2;   // 上から来るときもスコアと熱量ゲージに重ならない高さに出す
+    ctx.save(); ctx.globalAlpha = on ? 1 : 0.55;
+    ctx.beginPath(); ctx.arc(x, y, 15, 0, Math.PI * 2); ctx.fillStyle = ENEMY_BULLET_COLOR; ctx.fill();
+    ctx.lineWidth = 3; ctx.strokeStyle = "#fff"; ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.font = "bold 20px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("!", x, y + 1);
+    ctx.textBaseline = "alphabetic"; ctx.restore();
+    return;
+  }
+  const a = Math.atan2(eb.vy, eb.vx), L = eb.r * 1.8, Wd = eb.r * 0.7;
+  ctx.save(); ctx.translate(eb.x, eb.y); ctx.rotate(a);
+  const fl = 8 + Math.random() * 6;   // 後ろの炎
+  ctx.beginPath(); ctx.moveTo(-L, -Wd * 0.6); ctx.lineTo(-L - fl, 0); ctx.lineTo(-L, Wd * 0.6); ctx.fillStyle = "#ffb74d"; ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-L + 2, -Wd); ctx.lineTo(-L - 4, -Wd - 6); ctx.lineTo(-L + 8, -Wd); ctx.moveTo(-L + 2, Wd); ctx.lineTo(-L - 4, Wd + 6); ctx.lineTo(-L + 8, Wd);
+  ctx.fillStyle = ENEMY_BULLET_COLOR; ctx.fill();   // 羽
+  ctx.beginPath(); ctx.moveTo(-L, -Wd); ctx.lineTo(L * 0.45, -Wd); ctx.quadraticCurveTo(L * 1.2, 0, L * 0.45, Wd); ctx.lineTo(-L, Wd); ctx.closePath();
+  ctx.fillStyle = eb.flash > 0 ? "#ffffff" : "#2a1630"; ctx.fill();
+  ctx.lineWidth = 2.5; ctx.strokeStyle = ENEMY_BULLET_COLOR; ctx.stroke();
+  ctx.fillStyle = ENEMY_BULLET_COLOR; ctx.fillRect(-L * 0.35, -Wd, 5, Wd * 2);   // 帯
+  ctx.restore();
+  const bw = eb.r * 2 + 10, bx = eb.x - bw / 2, by = eb.y - eb.r - 14, k = Math.max(0, eb.hp / eb.maxHp);   // 耐久のバー(敵のHPバーと同じ見た目)
+  ctx.fillStyle = "#000a"; ctx.fillRect(bx - 1, by - 1, bw + 2, 7);
+  ctx.fillStyle = "#ff5252"; ctx.fillRect(bx, by, bw * k, 5);
+}
+
 function drawEnemyBullet(eb) {
+  if (eb.pod) { drawPod(eb); return; }
   const spikes = 8, r1 = eb.r + 4, r2 = eb.r - 1, rot = performance.now() / 300;
   ctx.beginPath();
   for (let i = 0; i < spikes * 2; i++) {
