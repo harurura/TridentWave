@@ -413,7 +413,7 @@ const MODE = (() => { try { const m = new URLSearchParams(location.search).get("
 (function applyMode() {
   const k = MODES[MODE].timeScale;
   TIERS.forEach(t => t.at *= k);
-  TIER_MIX.ramp *= k; FINAL.bossAt *= k; FINAL.clearAt *= k;
+  TIER_MIX.ramp *= k; FINAL.bossAt *= k; FINAL.clearAt *= k; REINFORCE.at = REINFORCE.at.map(t => t * k);
   SPAWN.rampPerSec /= k; SPAWN.batchEvery *= k;
   for (const d of Object.values(ENEMY)) if (d.from < 99999) d.from *= k;
 })();
@@ -451,6 +451,7 @@ function applyDebugStart() {
   state = "play"; S.tip = null; S.score = 0; S.xp = 0; S.hp = S.maxHp;
   S.time = D.from; S.heat = S.maxHeat = D.heat;
   S.tierShown = currentTier(); for (let t = 0; t <= S.tierShown; t++) S.bossDone[t] = true;   // 途中の段階の巨兵はもう出たことにする
+  S.reinNext = REINFORCE.at.filter(t => t <= S.time).length;   // 過ぎた時間の増援も来たことにする
   banner(`デバッグ: ${fmtTime(D.from)} から(Lv ${S.level})`, "#80d8ff");
 }
 function clearMinutes() { return Math.round(FINAL.clearAt / 60); }
@@ -619,7 +620,7 @@ function startGame(withTutorial) {
     cards: {}, wcool: {}, evolved: {}, bombs: BOMB.start,
     fireCool: 0, shield: 0, invuln: 0, hurtFlash: 0, aimAngle: -Math.PI / 2,
     tierShown: 0, bossDone: {}, finalSpawned: false, finalKilled: false, banner: null,
-    score: 0, heat: HEAT.min, maxHeat: HEAT.min, clearBonus: null, bombsUsed: 0,
+    score: 0, heat: HEAT.min, maxHeat: HEAT.min, clearBonus: null, bombsUsed: 0, reinNext: 0,
   };
   recalc();
   S.hp = S.maxHp;
@@ -780,6 +781,16 @@ function update(dt) {
     S.tierShown = ct;
     if (!S.bossDone[ct]) { S.bossDone[ct] = true; spawnEnemy("boss", null, ct); }
     banner(`第${ct + 1}段階 ― ${TIERS[ct].name}と巨兵が来る!`, TIERS[ct].tint);
+  }
+  // --- 終盤の巨兵の増援(熱量が高いと2体で挟み撃ち) ---
+  if (REINFORCE.enable && !tut && S.reinNext < REINFORCE.at.length && S.time >= REINFORCE.at[S.reinNext]) {
+    S.reinNext++;
+    const two = S.heat >= REINFORCE.heatFor2, first = Math.random() < 0.5 ? "L" : "R";
+    for (const side of two ? ["L", "R"] : [first]) {
+      const e = spawnEnemy("boss", side, TIERS.length - 1);
+      e.hp = e.maxHp = e.maxHp * REINFORCE.hpMul;
+    }
+    banner(two ? "巨兵の増援 ― 左右から挟み撃ち!" : "巨兵の増援が来る!", "#ff7043"); shake = 6;
   }
   // --- 最終ボス ---
   if (!S.finalSpawned && S.time >= FINAL.bossAt) {
